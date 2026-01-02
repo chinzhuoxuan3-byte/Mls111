@@ -1,0 +1,3482 @@
+do
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local StarterGui = game:GetService("StarterGui")
+local UserInputService = game:GetService("UserInputService")
+local GuiService = game:GetService("GuiService")
+local LocalPlayer = Players.LocalPlayer
+local LOOK_DURATION = 0.28
+local MAX_TARGET_RANGE = 200
+local FIRE_DELAY_AFTER_LOOK = 0.03
+local CHECK_INTERVAL = 0.12
+local APPEAR_DELAY_DEFAULT = 0.5
+local APPEAR_DELAY = APPEAR_DELAY_DEFAULT
+local AUTO_SHOOT_DELAY = 0.5
+CHECK_WALLS = true
+AUTO_RELOAD_ENABLED = false
+USER_AUTO_SHOOT_TOGGLE = false
+INSTANT_SHOOT_ENABLED = false
+SILENT_AIM_ENABLED = false
+SILENT_AIM_SAVE_PLAYERS_ENABLED = false
+SILENT_AIM_BOMBER_NEAR_ENABLED = false
+SILENT_AIM_AUTO_AIM = false
+local silentAimCurrentTarget = nil
+local silentAimCurrentModel = nil
+local silentAimIsPlayerTarget = false
+local silentAimSavedPlayer = nil
+local SilentAimZombieTypes = { "Bomber", "Cuirassier", "Runner", "Zapper", "Igniter", "Shambler" }
+local SilentAimSelectedTypes = {}
+local SilentAimEnabledTypes = {}
+for _, t in ipairs(SilentAimZombieTypes) do SilentAimEnabledTypes[t] = false end
+local SILENT_AIM_USE_FOV = false
+local SILENT_AIM_SHOW_FOV = false
+local SILENT_AIM_MOBILE_FOV = false
+local SILENT_AIM_FOV_SIZE = 50
+local isWorldPosInSilentAimFov = function(worldPos)
+    if not SILENT_AIM_USE_FOV then return true end
+    local cam = Workspace.CurrentCamera
+    if not cam then return true end
+    local screenPos, onScreen = cam:WorldToViewportPoint(worldPos)
+    if not onScreen then return false end
+    local viewportSize = cam.ViewportSize
+    local centerVec = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+    local dist = (Vector2.new(screenPos.X, screenPos.Y) - centerVec).Magnitude
+    local sizePx = (math.clamp(SILENT_AIM_FOV_SIZE, 10, 120) / 40) * 250
+    return dist <= (sizePx / 2)
+end
+local autoShootCurrentTarget = nil
+local autoShootCurrentModel = nil
+local autoShootActive = false
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local BOMBER_SAFE_TEAMMATES = false
+local BOMBER_SAFE_SELF = false
+local BOMBER_SAFE_RADIUS = 10
+local BOMBER_VISUALIZE_RADIUS = false
+local BomberRadiusVisuals = {}
+local SHOOT_BOMBER_NEAR_TEAMMATES = false
+local BomberSafetyWhitelist = {}
+local ShootBomberNearWhitelist = {}
+local AutoSaveWhitelist = {}
+AUTO_SAVE_PLAYERS_ENABLED = false
+local MAX_SAVE_PLAYERS_RANGE = MAX_TARGET_RANGE
+local INSTANT_SAVE_PLAYERS_ENABLED = false
+local SAVE_PLAYER_DELAY = 0.5
+local PREDICTION_DISTANCE = 0
+local PREDICTION_MIN_SPEED = 2
+local PREDICTION_STILLNESS_WINDOW = 0.4
+local WALL_CHECK_TRANSPARENCY_THRESHOLD = 0.95
+local WALL_CHECK_SAMPLE_AXIS_SCALE = 0.35
+local WALL_CHECK_MIN_SAMPLE_OFFSET = 0.4
+local WALL_CHECK_MAX_SAMPLE_OFFSET = 2.75
+local WALL_CHECK_REQUIRED_CLEAR_RATIO = 0.6
+local EPS = 1e-4
+local isAiming = false
+local watchedTools = {}
+local activeConnections = {}
+local characterAddedConn = nil
+local reloadInProgress = {}
+local ShootTypeList = { "Bomber", "Cuirassier", "Runner", "Zapper", "Igniter", "Shambler" }
+local SelectedShootTypes = {}
+local EnabledShootTypes = {}
+for _, t in ipairs(ShootTypeList) do EnabledShootTypes[t] = false end
+local getPredictedAimPosition
+local getAimPosition
+local PartVelocityCache = setmetatable({}, { __mode = "k" })
+local function getHistoricalVelocity(part)
+    if not part or not part.Parent then return nil end
+    local now = os.clock()
+    local pos = part.Position
+    local entry = PartVelocityCache[part]
+    if entry then
+        local dt = math.max(now - entry.time, EPS)
+        if dt < (1 / 240) then
+            return entry.vel
+        end
+        local vel = (pos - entry.pos) / dt
+        entry.pos = pos
+        entry.time = now
+        entry.vel = vel
+        entry.lastSpeed = vel.Magnitude
+        if entry.lastSpeed >= PREDICTION_MIN_SPEED then
+            entry.lastMoveTime = now
+        end
+        return vel
+    else
+        PartVelocityCache[part] = {
+            pos = pos,
+            time = now,
+            vel = Vector3.new(0, 0, 0),
+            lastSpeed = 0,
+            lastMoveTime = nil,
+        }
+    end
+    return nil
+end
+local function hasRecentMovement(part)
+    local entry = PartVelocityCache[part]
+    if not entry or not entry.lastMoveTime then
+        return false
+    end
+    return (os.clock() - entry.lastMoveTime) <= PREDICTION_STILLNESS_WINDOW
+end
+local function getModelVelocityFromPart(part)
+    if not part then return nil end
+    local model = part:FindFirstAncestorWhichIsA("Model")
+    if not model then return nil end
+    local root = model:FindFirstChild("HumanoidRootPart")
+        or model:FindFirstChild("Torso")
+        or model:FindFirstChild("UpperTorso")
+        or model.PrimaryPart
+    if root and root:IsA("BasePart") then
+        local vel = root.AssemblyLinearVelocity or Vector3.new(0, 0, 0)
+        if vel.Magnitude > EPS then
+            return vel
+        end
+    end
+    return nil
+end
+USE_FOV = false
+SHOW_FOV = false
+local MOBILE_FOV = false
+local FOV_SIZE_DEG = 50
+local FOV_MIN_DEG, FOV_MAX_DEG = 10, 120
+local fovGui = nil
+local fovCircle = nil
+local fovUpdateConn = nil
+local function ensureFovGui()
+    if fovGui and fovGui.Parent then
+        return fovGui, fovCircle
+    end
+    local pg
+    if type(getPlayerGui) == "function" then
+        pg = getPlayerGui()
+    else
+        pg = LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui")
+    end
+    fovGui = Instance.new("ScreenGui")
+    fovGui.Name = "AutoShoot_FovGui"
+    fovGui.ResetOnSpawn = false
+    fovGui.Parent = pg
+    local circle = Instance.new("Frame")
+    circle.Name = "Circle"
+    circle.AnchorPoint = Vector2.new(0.5, 0.5)
+    circle.Position = UDim2.new(0.5, 0, 0.5, 0)
+    circle.BackgroundTransparency = 1
+    circle.BorderSizePixel = 0
+    circle.Parent = fovGui
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = circle
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 2
+    stroke.Color = Color3.fromRGB(255, 255, 0)
+    stroke.Transparency = 0.2
+    stroke.Parent = circle
+    fovCircle = circle
+    return fovGui, fovCircle
+end
+local function getFovScreenCenter()
+    local cam = Workspace.CurrentCamera
+    if not cam then
+        return Vector2.new(0, 0)
+    end
+    local viewportSize = cam.ViewportSize
+    if MOBILE_FOV or UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
+        return Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+    end
+    local mousePos = UserInputService:GetMouseLocation()
+    local inset = GuiService:GetGuiInset()
+    return mousePos - Vector2.new(inset.X, inset.Y)
+end
+local function ensureFovUpdateLoop()
+    if fovUpdateConn then return end
+    fovUpdateConn = RunService.RenderStepped:Connect(function()
+        if not (USE_FOV and SHOW_FOV) then
+            if fovGui then fovGui.Enabled = false end
+            return
+        end
+        local gui, circle = ensureFovGui()
+        gui.Enabled = true
+        local cam = Workspace.CurrentCamera
+        if not cam then return end
+        local clamped = math.clamp(FOV_SIZE_DEG, FOV_MIN_DEG, FOV_MAX_DEG)
+        local sizePx = math.floor((clamped / 40) * 250)
+        circle.Size = UDim2.new(0, sizePx, 0, sizePx)
+        local viewportSize = cam.ViewportSize
+        local centerVec = getFovScreenCenter()
+        local xScale = centerVec.X / viewportSize.X
+        local yScale = centerVec.Y / viewportSize.Y
+        circle.Position = UDim2.new(xScale, 0, yScale, 0)
+    end)
+end
+function updateFovCircle()
+    if not (USE_FOV and SHOW_FOV) then
+        if fovGui then fovGui.Enabled = false end
+        return
+    end
+    ensureFovUpdateLoop()
+end
+local function isWorldPosInFov(worldPos)
+    if not USE_FOV then return true end
+    local cam = Workspace.CurrentCamera
+    if not cam then return true end
+    local viewportSize = cam.ViewportSize
+    if not viewportSize or viewportSize.X <= 0 or viewportSize.Y <= 0 then
+        return true
+    end
+    local screenPos, onScreen = cam:WorldToViewportPoint(worldPos)
+    if not onScreen then
+        return false
+    end
+    local centerVec = getFovScreenCenter()
+    local dist = (Vector2.new(screenPos.X, screenPos.Y) - centerVec).Magnitude
+    local clamped = math.clamp(FOV_SIZE_DEG, FOV_MIN_DEG, FOV_MAX_DEG)
+    local sizePx = (clamped / 40) * 250
+    local radius = sizePx / 2
+    return dist <= radius
+end
+local TARGET_ESP_ENABLED = false
+local AIM_DOT_ENABLED = false
+local activeAimModel = nil
+local activeAimPart = nil
+local activeHighlight = nil
+local activeAimDot = nil
+local activeAimDotPart = nil
+local activeAimDotCurrentPos = nil
+local TARGET_CHAMS_TRANSPARENCY = 0.4
+local TARGET_CHAMS_COLOR = Color3.fromRGB(255, 220, 50)
+local AIM_DOT_COLOR = Color3.fromRGB(255, 0, 0)
+local AIM_DOT_SIZE = 12
+local AIM_DOT_LERP_SPEED = 15
+local function getPlayerHeadPosition()
+    local char = LocalPlayer and LocalPlayer.Character
+    if not char then return nil end
+    local head = char:FindFirstChild("Head")
+    if head and head:IsA("BasePart") then
+        return head.Position + Vector3.new(0, 1, 0)
+    end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp and hrp:IsA("BasePart") then
+        return hrp.Position + Vector3.new(0, 2, 0)
+    end
+    return nil
+end
+local function createAimDot()
+    if activeAimDot and activeAimDot.Parent then return activeAimDot end
+    local startPos = getPlayerHeadPosition() or Vector3.new(0, 100, 0)
+    local anchorPart = Instance.new("Part")
+    anchorPart.Name = "AimDotAnchor"
+    anchorPart.Size = Vector3.new(0.1, 0.1, 0.1)
+    anchorPart.Position = startPos
+    anchorPart.Anchored = true
+    anchorPart.CanCollide = false
+    anchorPart.CanQuery = false
+    anchorPart.CanTouch = false
+    anchorPart.Transparency = 1
+    anchorPart.Parent = Workspace.CurrentCamera
+    activeAimDotPart = anchorPart
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "AimDotBillboard"
+    billboard.Adornee = anchorPart
+    billboard.Size = UDim2.new(0, AIM_DOT_SIZE * 2, 0, AIM_DOT_SIZE * 2)
+    billboard.StudsOffset = Vector3.new(0, 0, 0)
+    billboard.AlwaysOnTop = true
+    billboard.LightInfluence = 0
+    billboard.Parent = anchorPart
+    local dot = Instance.new("Frame")
+    dot.Name = "Dot"
+    dot.AnchorPoint = Vector2.new(0.5, 0.5)
+    dot.Position = UDim2.new(0.5, 0, 0.5, 0)
+    dot.Size = UDim2.new(0, AIM_DOT_SIZE, 0, AIM_DOT_SIZE)
+    dot.BackgroundColor3 = AIM_DOT_COLOR
+    dot.BorderSizePixel = 0
+    dot.Parent = billboard
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = dot
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 255, 255)
+    stroke.Thickness = 2
+    stroke.Transparency = 0.3
+    stroke.Parent = dot
+    activeAimDot = billboard
+    activeAimDotCurrentPos = startPos
+    return billboard
+end
+local function clearAimDot()
+    if activeAimDot then
+        pcall(function() activeAimDot:Destroy() end)
+        activeAimDot = nil
+    end
+    if activeAimDotPart then
+        pcall(function() activeAimDotPart:Destroy() end)
+        activeAimDotPart = nil
+    end
+    activeAimDotCurrentPos = nil
+end
+local aimDotUpdateConn = nil
+local function startAimDotUpdateLoop()
+    if aimDotUpdateConn then return end
+    aimDotUpdateConn = RunService.RenderStepped:Connect(function(deltaTime)
+        if not AIM_DOT_ENABLED then
+            if activeAimDot then clearAimDot() end
+            return
+        end
+        if not activeAimDot or not activeAimDot.Parent or not activeAimDotPart or not activeAimDotPart.Parent then
+            createAimDot()
+        end
+        if not activeAimDotPart then return end
+        local targetPos = nil
+        if autoShootActive and autoShootCurrentTarget and autoShootCurrentTarget.Parent then
+            targetPos = autoShootCurrentTarget.Position
+            if type(getPredictedAimPosition) == "function" then
+                local predicted = getPredictedAimPosition(autoShootCurrentTarget)
+                if predicted then targetPos = predicted end
+            end
+        elseif silentAimCurrentTarget and silentAimCurrentTarget.Parent then
+            local hasSilentAim = SILENT_AIM_ENABLED or SILENT_AIM_SAVE_PLAYERS_ENABLED or SILENT_AIM_BOMBER_NEAR_ENABLED
+            if hasSilentAim then
+                targetPos = silentAimCurrentTarget.Position
+                if type(getPredictedAimPosition) == "function" then
+                    local predicted = getPredictedAimPosition(silentAimCurrentTarget)
+                    if predicted then targetPos = predicted end
+                end
+            end
+        elseif activeAimPart and activeAimPart.Parent then
+            targetPos = activeAimPart.Position
+            if type(getPredictedAimPosition) == "function" then
+                local predicted = getPredictedAimPosition(activeAimPart)
+                if predicted then
+                    targetPos = predicted
+                end
+            elseif type(getAimPosition) == "function" then
+                local predicted = getAimPosition(activeAimPart)
+                if predicted then
+                    targetPos = predicted
+                end
+            end
+        end
+        if not targetPos then
+            targetPos = getPlayerHeadPosition()
+        end
+        if not targetPos then
+            targetPos = getPlayerHeadPosition() or Vector3.new(0, 100, 0)
+        end
+        if not activeAimDotCurrentPos then
+            activeAimDotCurrentPos = activeAimDotPart.Position
+        end
+        local lerpAlpha = math.clamp(deltaTime * AIM_DOT_LERP_SPEED, 0, 1)
+        activeAimDotCurrentPos = activeAimDotCurrentPos:Lerp(targetPos, lerpAlpha)
+        activeAimDotPart.Position = activeAimDotCurrentPos
+    end)
+end
+startAimDotUpdateLoop()
+local function clearActiveTargetVisuals()
+    activeAimModel = nil
+    activeAimPart = nil
+    if activeHighlight then
+        pcall(function() activeHighlight:Destroy() end)
+        activeHighlight = nil
+    end
+end
+local function createTargetHighlight(model)
+    if not model or not model.Parent then return nil end
+    if activeHighlight then
+        pcall(function() activeHighlight:Destroy() end)
+        activeHighlight = nil
+    end
+    local hl = Instance.new("Highlight")
+    hl.Name = "AutoTargetHighlight"
+    hl.Adornee = model
+    hl.Parent = model
+    hl.FillColor = TARGET_CHAMS_COLOR
+    hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+    hl.FillTransparency = math.clamp(TARGET_CHAMS_TRANSPARENCY, 0, 1)
+    hl.OutlineTransparency = 0
+    activeHighlight = hl
+    return hl
+end
+local function updateActiveTargetVisuals(model, part)
+    if not model or not part then
+        clearActiveTargetVisuals()
+        return
+    end
+    if activeAimModel == model and activeAimPart == part then
+        if TARGET_ESP_ENABLED and not activeHighlight then
+            pcall(function() createTargetHighlight(model) end)
+        end
+        return
+    end
+    clearActiveTargetVisuals()
+    activeAimModel = model
+    activeAimPart = part
+    if TARGET_ESP_ENABLED then
+        pcall(function() createTargetHighlight(model) end)
+    end
+end
+local lastReloadNotify = 0
+local NOTIFY_COOLDOWN = 4
+local function notifyReload()
+    local now = tick()
+    if now - lastReloadNotify < NOTIFY_COOLDOWN then return end
+    lastReloadNotify = now
+    pcall(function()
+        if type(WindUI) == "table" and type(WindUI.Notify) == "function" then
+            pcall(function()
+                WindUI:Notify({ Title = "Auto Reload", Content = "A Round Has Been Reloaded.", Duration = 3, Icon = "refresh-cw" })
+            end)
+            return
+        end
+        pcall(function()
+            StarterGui:SetCore("SendNotification", { Title = "Auto Reload"; Text = "A Round Has Been Reloaded."; Duration = 3; })
+        end)
+    end)
+end
+local function isGun(tool)
+    if not tool or not tool:IsA("Tool") then return false end
+    local animFolder = tool:FindFirstChild("Animations")
+    if not animFolder then return false end
+    if animFolder:FindFirstChild("Aim") then return true end
+    if animFolder:FindFirstChild("Aiming") then return true end
+    return false
+end
+local function buildBaseIgnore()
+    local baseIgnore = {}
+    for _, pl in ipairs(Players:GetPlayers()) do
+        local ch = pl.Character
+        if ch and ch:IsA("Model") then table.insert(baseIgnore, ch) end
+    end
+    local camFolderInst = Workspace:FindFirstChild("Camera")
+    if camFolderInst then
+        for _, d in ipairs(camFolderInst:GetDescendants()) do
+            if d and d:IsA("Model") and d.Name == "m_Zombie" then table.insert(baseIgnore, d) end
+        end
+    end
+    return baseIgnore
+end
+local function getWallCheckOrigin()
+    if LocalPlayer and LocalPlayer.Character and LocalPlayer.Character.Parent then
+        local head = LocalPlayer.Character:FindFirstChild("Head")
+        if head and head:IsA("BasePart") then
+            return head.Position
+        end
+    end
+    local cam = Workspace.CurrentCamera
+    if cam then
+        return cam.CFrame.Position
+    end
+    return nil
+end
+local function isObstructedBetweenIterative(origin, targetPos, targetModel, baseIgnore)
+    if not CHECK_WALLS then return false end
+    if not targetPos then return false end
+    local actualOrigin = origin
+    if LocalPlayer and LocalPlayer.Character then
+        local head = LocalPlayer.Character:FindFirstChild("Head")
+        if head and head:IsA("BasePart") then
+            actualOrigin = head.Position
+        end
+    end
+    if not actualOrigin then return false end
+    local dir = targetPos - actualOrigin
+    local dist = dir.Magnitude
+    if dist <= 0 then return false end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    local filter = {}
+    if baseIgnore then
+        for i = 1, #baseIgnore do filter[#filter + 1] = baseIgnore[i] end
+    end
+    if LocalPlayer and LocalPlayer.Character then table.insert(filter, LocalPlayer.Character) end
+    params.FilterDescendantsInstances = filter
+    local maxIterations = 16
+    local remainingDistance = dist
+    local originPos = actualOrigin
+    local dirUnit = dir.Unit
+    local epsilon = 0.25
+    for i = 1, maxIterations do
+        local ok, result = pcall(function()
+            return Workspace:Raycast(originPos, dirUnit * remainingDistance, params)
+        end)
+        if not ok or not result then
+            return false
+        end
+        local hitInst = result.Instance
+        if not hitInst then return false end
+        if targetModel and hitInst:IsDescendantOf(targetModel) then
+            return false
+        end
+        local isBasePart = hitInst:IsA("BasePart")
+        local transparency = isBasePart and hitInst.Transparency or 0
+        local canCollide = isBasePart and hitInst.CanCollide
+        local effectiveInvisible = (isBasePart and transparency >= WALL_CHECK_TRANSPARENCY_THRESHOLD)
+        local nonBlocking = false
+        if isBasePart and (not canCollide or effectiveInvisible) then nonBlocking = true end
+        local ancestor = hitInst
+        while ancestor and ancestor.Parent do
+            if ancestor:IsA("Model") and (ancestor.Name == "m_Zombie") then
+                nonBlocking = true; break
+            end
+            ancestor = ancestor.Parent
+        end
+        for _, pl in ipairs(Players:GetPlayers()) do
+            local ch = pl.Character
+            if ch and hitInst:IsDescendantOf(ch) then nonBlocking = true; break end
+        end
+        if nonBlocking then
+            table.insert(params.FilterDescendantsInstances, hitInst)
+            local advancePos = result.Position + dirUnit * epsilon
+            if (advancePos - actualOrigin).Magnitude >= dist - EPS then return false end
+            originPos = advancePos
+            remainingDistance = (targetPos - originPos).Magnitude
+        else
+            return true
+        end
+    end
+    return true
+end
+local function getWallCheckSamplePositions(part, aimPosOverride)
+    if not part or not part.Parent then return {} end
+    local basePos = aimPosOverride or part.Position
+    local cf = part.CFrame
+    local size = part.Size or Vector3.new(1, 1, 1)
+    local function axisOffset(component)
+        local scaled = component * WALL_CHECK_SAMPLE_AXIS_SCALE
+        if scaled < WALL_CHECK_MIN_SAMPLE_OFFSET then
+            scaled = WALL_CHECK_MIN_SAMPLE_OFFSET
+        end
+        if scaled > WALL_CHECK_MAX_SAMPLE_OFFSET then
+            scaled = WALL_CHECK_MAX_SAMPLE_OFFSET
+        end
+        return scaled
+    end
+    local xOff = axisOffset(size.X)
+    local yOff = axisOffset(size.Y)
+    local zOff = axisOffset(size.Z)
+    local offsets = {
+        Vector3.new(0, 0, 0),
+        Vector3.new(0, yOff, 0),
+        Vector3.new(0, -yOff, 0),
+        Vector3.new(xOff, 0, 0),
+        Vector3.new(-xOff, 0, 0),
+        Vector3.new(0, 0, zOff),
+        Vector3.new(0, 0, -zOff)
+    }
+    local samples = {}
+    for _, offset in ipairs(offsets) do
+        local worldOffset = cf:VectorToWorldSpace(offset)
+        samples[#samples + 1] = basePos + worldOffset
+    end
+    return samples
+end
+local function hasClearShotOnPart(originPos, aimPart, targetModel, baseIgnore, aimPosOverride)
+    if not CHECK_WALLS then return true end
+    if not originPos or not aimPart or not aimPart.Parent then return false end
+    local samples = getWallCheckSamplePositions(aimPart, aimPosOverride)
+    if #samples == 0 then return false end
+    local requiredClear = math.max(1, math.ceil(#samples * WALL_CHECK_REQUIRED_CLEAR_RATIO))
+    local clearCount = 0
+    for _, samplePos in ipairs(samples) do
+        local obstructed = isObstructedBetweenIterative(originPos, samplePos, targetModel, baseIgnore)
+        if not obstructed then
+            clearCount = clearCount + 1
+            if clearCount >= requiredClear then
+                return true
+            end
+        end
+    end
+    return false
+end
+local function isZombieMoving(zombie)
+    if not zombie or not zombie.Parent then return false end
+    local hrp = zombie:FindFirstChild("HumanoidRootPart") or zombie:FindFirstChild("Torso") or zombie:FindFirstChild("UpperTorso")
+    if hrp and hrp:IsA("BasePart") then
+        local vel = hrp.AssemblyLinearVelocity
+        if vel and vel.Magnitude > 0.5 then
+            return true
+        end
+    end
+    for _, part in ipairs(zombie:GetDescendants()) do
+        if part:IsA("BasePart") then
+            local vel = part.AssemblyLinearVelocity
+            if vel and vel.Magnitude > 0.5 then
+                return true
+            end
+            break
+        end
+    end
+    return false
+end
+local function findBestAimPart(zombie)
+    if not zombie or not zombie.Parent then return nil end
+    local moving = isZombieMoving(zombie)
+    if moving then
+        local torso = zombie:FindFirstChild("Torso")
+            or zombie:FindFirstChild("UpperTorso")
+            or zombie:FindFirstChild("HumanoidRootPart")
+        if torso and torso:IsA("BasePart") then return torso end
+        local head = zombie:FindFirstChild("Head", true)
+        if head and head:IsA("BasePart") then return head end
+    else
+        local head = zombie:FindFirstChild("Head", true)
+        if head and head:IsA("BasePart") then return head end
+        local torso = zombie:FindFirstChild("Torso")
+            or zombie:FindFirstChild("UpperTorso")
+            or zombie:FindFirstChild("HumanoidRootPart")
+        if torso and torso:IsA("BasePart") then return torso end
+    end
+    local barrel = zombie:FindFirstChild("Barrel", true)
+    if barrel and barrel:IsA("BasePart") then return barrel end
+    if zombie.PrimaryPart and zombie.PrimaryPart:IsA("BasePart") then
+        return zombie.PrimaryPart
+    end
+    for _, p in ipairs(zombie:GetDescendants()) do
+        if p:IsA("BasePart") then
+            return p
+        end
+    end
+    return nil
+end
+getPredictedAimPosition = function(part)
+    if not part or not part.Parent or not part:IsA("BasePart") then return nil end
+    local position = part.Position
+    local leadTime = tonumber(PREDICTION_DISTANCE) or 0
+    if leadTime <= EPS then
+        return position
+    end
+    local vel = part.AssemblyLinearVelocity or Vector3.new(0, 0, 0)
+    local historical = getHistoricalVelocity(part)
+    local recentlyMoving = hasRecentMovement(part)
+    local entry = PartVelocityCache[part]
+    local function isValidVelocity(v)
+        return v and v.Magnitude >= PREDICTION_MIN_SPEED
+    end
+    if not isValidVelocity(vel) then
+        local fallback = getModelVelocityFromPart(part)
+        if isValidVelocity(fallback) then
+            vel = fallback
+        end
+    end
+    if not isValidVelocity(vel) and isValidVelocity(historical) then
+        vel = historical
+    end
+    local movingNow = isValidVelocity(vel)
+    if movingNow and entry then
+        entry.lastSpeed = vel.Magnitude
+        entry.lastMoveTime = os.clock()
+    end
+    if not movingNow and not recentlyMoving then
+        return position
+    end
+    return position + vel * leadTime
+end
+local function getAimPosition(part, opts)
+    if not part or not part.Parent or not part:IsA("BasePart") then return nil end
+    opts = opts or {}
+    if opts.skipPrediction then
+        return part.Position
+    end
+    return getPredictedAimPosition(part) or part.Position
+end
+local function GetZombieTypeFromModel(model)
+    if not model or not model:IsA("Model") then return nil end
+    local parent = model.Parent
+    if parent and parent.Name == "Slim" and parent.Parent and parent.Parent.Name == "Zombies" then
+        return "Cuirassier"
+    end
+    local agent = model:FindFirstChild("Agent")
+    if agent then
+        local typeValue = agent:FindFirstChild("Type")
+        if typeValue and typeValue:IsA("StringValue") then
+            local t = string.lower(typeValue.Value or "")
+            if t == "normal" then return "Shambler" end
+            if t == "barrel" then return "Bomber" end
+            if t == "fast" then return "Runner" end
+            if t == "sapper" then return "Zapper" end
+            if t == "igniter" then return "Igniter" end
+            if t == "cuirassier" then return "Cuirassier" end
+        end
+    end
+    if typeof(model.GetAttribute) == "function" then
+        local t = model:GetAttribute("Type")
+        if type(t) == "string" then
+            local lower = string.lower(t)
+            if lower == "normal" then return "Shambler" end
+            if lower == "barrel" then return "Bomber" end
+            if lower == "fast" then return "Runner" end
+            if lower == "sapper" then return "Zapper" end
+            if lower == "igniter" then return "Igniter" end
+            if lower == "cuirassier" then return "Cuirassier" end
+        end
+    end
+    if model:FindFirstChild("Barrel", true) then return "Bomber" end
+    if model:FindFirstChild("Whale Oil Lantern", true) then return "Igniter" end
+    if model:FindFirstChild("Sword", true) then return "Cuirassier" end
+    if model:FindFirstChild("Axe", true) and model:FindFirstChild("Head", true) then return "Zapper" end
+    if model:FindFirstChild("Eye", true) and not model:FindFirstChild("Axe", true) then return "Runner" end
+    return "Shambler"
+end
+local function isZombieOfType(model, typeName)
+    if not model or not model:IsA("Model") then return false end
+    if type(typeName) ~= "string" then return false end
+    local mappedType = GetZombieTypeFromModel(model)
+    return mappedType == typeName
+end
+local function isBomberNearTeammate(bomberModel, radius)
+    if not bomberModel then return false end
+    radius = radius or BOMBER_SAFE_RADIUS
+    local bomberPart = bomberModel:FindFirstChild("HumanoidRootPart") or bomberModel:FindFirstChildWhichIsA("BasePart")
+    if not bomberPart then return false end
+    local bomberPos = bomberPart.Position
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local dist = (hrp.Position - bomberPos).Magnitude
+                if dist <= radius then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+local function isBomberNearSelf(bomberModel, radius)
+    if not bomberModel then return false end
+    radius = radius or BOMBER_SAFE_RADIUS
+    local bomberPart = bomberModel:FindFirstChild("HumanoidRootPart") or bomberModel:FindFirstChildWhichIsA("BasePart")
+    if not bomberPart then return false end
+    local bomberPos = bomberPart.Position
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    local dist = (hrp.Position - bomberPos).Magnitude
+    return dist <= radius
+end
+local function shouldSkipBomberForSafety(model, zombieType)
+    if zombieType ~= "Bomber" then return false end
+    if BOMBER_SAFE_TEAMMATES and isBomberNearTeammate(model, BOMBER_SAFE_RADIUS) then
+        return true
+    end
+    if BOMBER_SAFE_SELF and isBomberNearSelf(model, BOMBER_SAFE_RADIUS) then
+        return true
+    end
+    if #BomberSafetyWhitelist > 0 then
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local isWhitelisted = false
+                for _, name in ipairs(BomberSafetyWhitelist) do
+                    if player.Name == name or player.DisplayName == name then
+                        isWhitelisted = true
+                        break
+                    end
+                end
+                if isWhitelisted then
+                    local char = player.Character
+                    if char then
+                        local hrp = char:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            local bomberPart = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChildWhichIsA("BasePart")
+                            if bomberPart then
+                                local dist = (hrp.Position - bomberPart.Position).Magnitude
+                                if dist <= BOMBER_SAFE_RADIUS then
+                                    return true
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if SHOOT_BOMBER_NEAR_TEAMMATES then
+        if #ShootBomberNearWhitelist > 0 then
+            local whitelistedPlayerNear = false
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer then
+                    local isWhitelisted = false
+                    for _, name in ipairs(ShootBomberNearWhitelist) do
+                        if player.Name == name or player.DisplayName == name then
+                            isWhitelisted = true
+                            break
+                        end
+                    end
+                    if isWhitelisted then
+                        local char = player.Character
+                        if char then
+                            local hrp = char:FindFirstChild("HumanoidRootPart")
+                            if hrp then
+                                local bomberPart = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChildWhichIsA("BasePart")
+                                if bomberPart then
+                                    local dist = (hrp.Position - bomberPart.Position).Magnitude
+                                    if dist <= BOMBER_SAFE_RADIUS then
+                                        whitelistedPlayerNear = true
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            if not whitelistedPlayerNear then
+                return true
+            end
+        else
+            if not isBomberNearTeammate(model, BOMBER_SAFE_RADIUS) then
+                return true
+            end
+        end
+    end
+    return false
+end
+local function updateBomberRadiusVisuals()
+    if not BOMBER_VISUALIZE_RADIUS then return end
+    local zombiesFolder = Workspace:FindFirstChild("Zombies")
+    if not zombiesFolder then return end
+    local seenBombers = {}
+    for _, model in ipairs(zombiesFolder:GetDescendants()) do
+        if model:IsA("Model") and GetZombieTypeFromModel(model) == "Bomber" then
+            seenBombers[model] = true
+            local bomberPart = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChildWhichIsA("BasePart")
+            if bomberPart then
+                if not BomberRadiusVisuals[model] then
+                    local circle = Instance.new("Part")
+                    circle.Name = "BomberRadiusVisual"
+                    circle.Shape = Enum.PartType.Cylinder
+                    circle.Size = Vector3.new(0.2, BOMBER_SAFE_RADIUS * 2, BOMBER_SAFE_RADIUS * 2)
+                    circle.Anchored = true
+                    circle.CanCollide = false
+                    circle.Transparency = 0
+                    circle.Material = Enum.Material.Neon
+                    circle.Color = Color3.fromRGB(255, 100, 0)
+                    circle.CFrame = CFrame.new(bomberPart.Position) * CFrame.Angles(0, 0, math.rad(90))
+                    circle.Parent = Workspace
+                    BomberRadiusVisuals[model] = circle
+                end
+                local bomberPos = bomberPart.Position
+                local footY = bomberPos.Y - 3
+                BomberRadiusVisuals[model].CFrame = CFrame.new(bomberPos.X, footY, bomberPos.Z) * CFrame.Angles(0, 0, math.rad(90))
+                local selfInside = false
+                local teammateInside = false
+                if BOMBER_SAFE_SELF then
+                    local char = LocalPlayer.Character
+                    if char then
+                        local hrp = char:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            local dist = (hrp.Position - bomberPos).Magnitude
+                            if dist <= BOMBER_SAFE_RADIUS then
+                                selfInside = true
+                            end
+                        end
+                    end
+                end
+                if BOMBER_SAFE_TEAMMATES then
+                    for _, player in ipairs(Players:GetPlayers()) do
+                        if player ~= LocalPlayer and player.Character then
+                            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+                            if hrp then
+                                local dist = (hrp.Position - bomberPos).Magnitude
+                                if dist <= BOMBER_SAFE_RADIUS then
+                                    teammateInside = true
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+                if selfInside then
+                    BomberRadiusVisuals[model].Color = Color3.fromRGB(255, 0, 0)
+                elseif teammateInside then
+                    BomberRadiusVisuals[model].Color = Color3.fromRGB(255, 255, 0)
+                else
+                    BomberRadiusVisuals[model].Color = Color3.fromRGB(255, 100, 0)
+                end
+            end
+        end
+    end
+    for model, visual in pairs(BomberRadiusVisuals) do
+        if not seenBombers[model] or not model.Parent then
+            pcall(function() visual:Destroy() end)
+            BomberRadiusVisuals[model] = nil
+        end
+    end
+end
+task.defer(function()
+    task.wait(1)
+    while true do
+        task.wait(0.2)
+        if BOMBER_VISUALIZE_RADIUS then
+            pcall(updateBomberRadiusVisuals)
+        end
+    end
+end)
+local function isZombieSpawning(model)
+    if not model then return false end
+    local state = model:FindFirstChild("State")
+    if state and state:IsA("StringValue") and state.Value == "Spawn" then
+        return true
+    end
+    local agent = model:FindFirstChild("Agent")
+    if agent then
+        local agentState = agent:FindFirstChild("State")
+        if agentState and agentState:IsA("StringValue") and agentState.Value == "Spawn" then
+            return true
+        end
+    end
+    return false
+end
+local function getNearestSelectedZombie(range, selectionList, useFovFlag, fovChecker)
+    range = range or MAX_TARGET_RANGE
+    local cam = Workspace.CurrentCamera
+    local originPos
+    if LocalPlayer and LocalPlayer.Character and LocalPlayer.Character.Parent then
+        local head = LocalPlayer.Character:FindFirstChild("Head")
+        if head and head:IsA("BasePart") then
+            originPos = head.Position
+        end
+    end
+    if not originPos and cam then
+        originPos = cam.CFrame.Position
+    end
+    if not originPos then
+        return nil, nil, nil
+    end
+    local baseIgnore = buildBaseIgnore()
+    local bestPart, bestDist, bestModel, bestType = nil, range + EPS, nil, nil
+    local selection = selectionList or SelectedShootTypes
+    local sel = {}
+    for _, t in ipairs(selection or {}) do
+        sel[t] = true
+    end
+    if not next(sel) then
+        return nil, nil, nil
+    end
+    local useFov = (useFovFlag ~= nil) and useFovFlag or USE_FOV
+    local fovFunc = fovChecker or isWorldPosInFov
+    local zombiesFolder = Workspace:FindFirstChild("Zombies")
+    if not zombiesFolder then
+        return nil, nil, nil
+    end
+    for _, model in ipairs(zombiesFolder:GetDescendants()) do
+        if model:IsA("Model") then
+            if isZombieSpawning(model) then
+            else
+                local matchedType = GetZombieTypeFromModel(model)
+                if matchedType and sel[matchedType] then
+                    if shouldSkipBomberForSafety(model, matchedType) then
+                    else
+                        local aimPart = findBestAimPart(model)
+                        if aimPart and aimPart:IsA("BasePart") then
+                            local aimPos = getAimPosition(aimPart)
+                            local passedFovCheck = true
+                            if useFov then
+                                local okFov, inFov = pcall(function()
+                                    return fovFunc(aimPos)
+                                end)
+                                if not okFov or not inFov then
+                                    passedFovCheck = false
+                                end
+                            end
+                            if passedFovCheck then
+                                local okDist, d = pcall(function()
+                                    return (aimPos - originPos).Magnitude
+                                end)
+                                if okDist and d and d <= range + EPS and d < bestDist then
+                                    local okVis, hasClear = pcall(function()
+                                        return hasClearShotOnPart(originPos, aimPart, model, baseIgnore)
+                                    end)
+                                    if okVis and hasClear then
+                                        bestPart, bestDist, bestModel, bestType = aimPart, d, model, matchedType
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestPart, bestModel, bestType
+end
+local function getNearestZombieToSavePlayer(range)
+    local cam = Workspace.CurrentCamera
+    local originPos
+    if LocalPlayer and LocalPlayer.Character and LocalPlayer.Character.Parent then
+        local head = LocalPlayer.Character:FindFirstChild("Head")
+        if head and head:IsA("BasePart") then
+            originPos = head.Position
+        end
+    end
+    if not originPos and cam then
+        originPos = cam.CFrame.Position
+    end
+    if not originPos then
+        return nil, nil, nil
+    end
+    local wsPlayersFolder = Workspace:FindFirstChild("Players")
+    local zombiesFolder = Workspace:FindFirstChild("Zombies")
+    if not wsPlayersFolder or not zombiesFolder then
+        return nil, nil, nil
+    end
+    local baseIgnore = buildBaseIgnore()
+    local bestZombieTorso, bestZombieModel, bestPlayer, bestDist = nil, nil, nil, range + EPS
+    local function scanZombieFolder(folder)
+        if not folder then return end
+        for _, model in ipairs(folder:GetChildren()) do
+            if model:IsA("Model") then
+                if isZombieSpawning(model) then
+                    continue
+                end
+                local zombieTorso = model:FindFirstChild("Torso") or model:FindFirstChild("UpperTorso") or model:FindFirstChild("HumanoidRootPart")
+                if zombieTorso and zombieTorso:IsA("BasePart") then
+                    local zombiePos = getAimPosition(zombieTorso, { skipPrediction = true })
+                    for _, player in ipairs(Players:GetPlayers()) do
+                        if player ~= LocalPlayer then
+                            local shouldSavePlayer = true
+                            if #AutoSaveWhitelist > 0 then
+                                shouldSavePlayer = false
+                                for _, name in ipairs(AutoSaveWhitelist) do
+                                    if player.Name == name or player.DisplayName == name then
+                                        shouldSavePlayer = true
+                                        break
+                                    end
+                                end
+                            end
+                            if shouldSavePlayer then
+                                local playerFolder = wsPlayersFolder:FindFirstChild(player.Name)
+                                if playerFolder then
+                                    local userStates = playerFolder:FindFirstChild("UserStates")
+                                    if userStates then
+                                        local grabbedVal = userStates:FindFirstChild("Grabbed")
+                                        local pinVal = userStates:FindFirstChild("Pin")
+                                        local grabbed = (grabbedVal and tonumber(grabbedVal.Value) or 0) ~= 0
+                                        local pinnedVal = (pinVal and pinVal.Value) or ""
+                                        local pinned = pinnedVal == "RunnerAttack" or pinnedVal == "RunnerClaw" or pinnedVal == "RunnerVomit"
+                                        if grabbed or pinned then
+                                            local character = player.Character
+                                            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                                            if humanoid and humanoid.Health >= 1 then
+                                                if character and character:IsA("Model") then
+                                                    local playerRoot = character:FindFirstChild("HumanoidRootPart")
+                                                    if playerRoot and playerRoot:IsA("BasePart") then
+                                                        local hasClearToPlayer = hasClearShotOnPart(originPos, playerRoot, character, baseIgnore)
+                                                        if hasClearToPlayer then
+                                                            local okDist, d = pcall(function()
+                                                                return (zombiePos - playerRoot.Position).Magnitude
+                                                            end)
+                                                            if okDist and d and d <= range + EPS and d < bestDist then
+                                                                local hasClearToZombie = hasClearShotOnPart(originPos, zombieTorso, model, baseIgnore)
+                                                                if hasClearToZombie then
+                                                                    bestZombieTorso = zombieTorso
+                                                                    bestZombieModel = model
+                                                                    bestPlayer = player
+                                                                    bestDist = d
+                                                                end
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    scanZombieFolder(zombiesFolder:FindFirstChild("Agent"))
+    scanZombieFolder(zombiesFolder:FindFirstChild("Slim"))
+    if not bestZombieTorso then
+        local camFolder = Workspace:FindFirstChild("Camera")
+        if camFolder then
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer then
+                    local playerFolder = wsPlayersFolder:FindFirstChild(player.Name)
+                    if playerFolder then
+                        local userStates = playerFolder:FindFirstChild("UserStates")
+                        if userStates then
+                            local grabbedVal = userStates:FindFirstChild("Grabbed")
+                            local pinVal = userStates:FindFirstChild("Pin")
+                            local grabbed = (grabbedVal and tonumber(grabbedVal.Value) or 0) ~= 0
+                            local pinnedVal = (pinVal and pinVal.Value) or ""
+                            local pinned = pinnedVal == "RunnerAttack" or pinnedVal == "RunnerClaw" or pinnedVal == "RunnerVomit"
+                            if grabbed or pinned then
+                                local character = player.Character
+                                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                                if humanoid and humanoid.Health >= 1 then
+                                    if character and character:IsA("Model") then
+                                        local playerRoot = character:FindFirstChild("HumanoidRootPart")
+                                        if playerRoot and playerRoot:IsA("BasePart") then
+                                            local hasClearToPlayer = hasClearShotOnPart(originPos, playerRoot, character, baseIgnore)
+                                            if hasClearToPlayer then
+                                                for _, model in ipairs(camFolder:GetChildren()) do
+                                                    if model:IsA("Model") and model.Name == "m_Zombie" then
+                                                        if isZombieSpawning(model) then
+                                                            continue
+                                                        end
+                                                        local zombieTorso = model:FindFirstChild("Torso") or model:FindFirstChild("UpperTorso")
+                                                        if zombieTorso and zombieTorso:IsA("BasePart") then
+                                                            local zombiePos = getAimPosition(zombieTorso, { skipPrediction = true })
+                                                            local okDist, d = pcall(function()
+                                                                return (zombiePos - playerRoot.Position).Magnitude
+                                                            end)
+                                                            if okDist and d and d <= range + EPS and d < bestDist then
+                                                                local hasClearToZombie = hasClearShotOnPart(originPos, zombieTorso, model, baseIgnore)
+                                                                if hasClearToZombie then
+                                                                    bestZombieTorso = zombieTorso
+                                                                    bestZombieModel = model
+                                                                    bestPlayer = player
+                                                                    bestDist = d
+                                                                end
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestZombieTorso, bestZombieModel, bestPlayer
+end
+local function getShotsLoadedForTool(tool)
+    if not tool then return 0 end
+    local s = tool:FindFirstChild("ShotsLoaded")
+    if s and (s:IsA("IntValue") or s:IsA("NumberValue")) then return s.Value end
+    local wsPlayersFolder = Workspace:FindFirstChild("Players")
+    if not wsPlayersFolder then return 0 end
+    local playerFolder = wsPlayersFolder:FindFirstChild(LocalPlayer.Name)
+    if not playerFolder then return 0 end
+    local toolFolder = playerFolder:FindFirstChild(tool.Name)
+    if not toolFolder then return 0 end
+    local shots = toolFolder:FindFirstChild("ShotsLoaded")
+    if shots and (shots:IsA("IntValue") or shots:IsA("NumberValue")) then return shots.Value end
+    return 0
+end
+local function findRemoteForTool(tool)
+    if not tool then return nil end
+    local remote = tool:FindFirstChild("RemoteEvent")
+    if remote then return remote end
+    local wsPlayersFolder = Workspace:FindFirstChild("Players")
+    if not wsPlayersFolder then return nil end
+    local playerFolder = wsPlayersFolder:FindFirstChild(LocalPlayer.Name)
+    if not playerFolder then return nil end
+    local toolFolder = playerFolder:FindFirstChild(tool.Name)
+    if not toolFolder then return nil end
+    return toolFolder:FindFirstChild("RemoteEvent")
+end
+local function reloadNockGun(tool)
+    if not tool then return end
+    if reloadInProgress[tool] then return end
+    reloadInProgress[tool] = true
+    local shots = getShotsLoadedForTool(tool)
+    if shots >= 7 then
+        print("Nock Gun already full: ShotsLoaded =", shots)
+        reloadInProgress[tool] = nil
+        return
+    end
+    local remote = findRemoteForTool(tool) or tool:FindFirstChild("RemoteEvent")
+    if not remote then
+        reloadInProgress[tool] = nil
+        return
+    end
+    pcall(function() remote:FireServer("StartReload") end)
+    task.wait(0.1)
+    local attempts = 0
+    local maxAttempts = 50
+    while attempts < maxAttempts do
+        local currentShots = getShotsLoadedForTool(tool)
+        if currentShots >= 7 then
+            print("Nock Gun reload complete: ShotsLoaded =", currentShots)
+            pcall(function() tool.Parent = LocalPlayer.Backpack end)
+            task.wait(0.02)
+            pcall(function() tool.Parent = LocalPlayer.Character end)
+            break
+        end
+        pcall(function() remote:FireServer("Reload") end)
+        task.wait(0.05)
+        attempts = attempts + 1
+    end
+    reloadInProgress[tool] = nil
+end
+local function reloadDoubleBarrelPistol(tool)
+    if not tool then return end
+    if reloadInProgress[tool] then return end
+    reloadInProgress[tool] = true
+    local shots = getShotsLoadedForTool(tool)
+    if shots ~= 0 then
+        print(tool.Name .. " has shots remaining: ShotsLoaded =", shots)
+        reloadInProgress[tool] = nil
+        return
+    end
+    local remote = findRemoteForTool(tool) or tool:FindFirstChild("RemoteEvent")
+    if not remote then
+        reloadInProgress[tool] = nil
+        return
+    end
+    local attempts = 0
+    local maxAttempts = 50
+    while attempts < maxAttempts do
+        local currentShots = getShotsLoadedForTool(tool)
+        if currentShots >= 2 then
+            print(tool.Name .. " reload complete: ShotsLoaded =", currentShots)
+            reloadInProgress[tool] = nil
+            pcall(function() tool.Parent = LocalPlayer.Backpack end)
+            task.wait(0.02)
+            pcall(function() tool.Parent = LocalPlayer.Character end)
+            task.wait(0.1)
+            return
+        end
+        pcall(function() remote:FireServer("Reload") end)
+        task.wait(0.05)
+        attempts = attempts + 1
+    end
+    reloadInProgress[tool] = nil
+end
+local function reloadHorseArtilleryPistol(tool)
+    if not tool then return end
+    if reloadInProgress[tool] then return end
+    reloadInProgress[tool] = true
+    local shots = getShotsLoadedForTool(tool)
+    if shots ~= 0 then
+        print(tool.Name .. " has shots remaining: ShotsLoaded =", shots)
+        reloadInProgress[tool] = nil
+        return
+    end
+    local remote = findRemoteForTool(tool) or tool:FindFirstChild("RemoteEvent")
+    if not remote then
+        reloadInProgress[tool] = nil
+        return
+    end
+    pcall(function() remote:FireServer("StartReload") end)
+    task.wait(0.1)
+    local attempts = 0
+    local maxAttempts = 50
+    while attempts < maxAttempts do
+        local currentShots = getShotsLoadedForTool(tool)
+        if currentShots >= 2 then
+            reloadInProgress[tool] = nil
+            if tool and tool.Parent == LocalPlayer.Character then
+                pcall(function() 
+                    tool.Parent = LocalPlayer.Backpack
+                end)
+                task.wait(0.02)
+                pcall(function() 
+                    tool.Parent = LocalPlayer.Character
+                end)
+                task.wait(0.1)
+            end
+            return
+        end
+        pcall(function() remote:FireServer("Reload") end)
+        task.wait(0.05)
+        attempts = attempts + 1
+    end
+    reloadInProgress[tool] = nil
+end
+local function quickUnequipReequip(tool)
+    if not tool or not tool.Parent then return end
+    task.spawn(function()
+        pcall(function()
+            tool.Parent = LocalPlayer.Backpack
+        end)
+        task.wait(0.02)
+        pcall(function()
+            tool.Parent = LocalPlayer.Character
+        end)
+    end)
+end
+local function reloadNormalGun(tool)
+    if not tool then return end
+    if reloadInProgress[tool] then return end
+    reloadInProgress[tool] = true
+    local remote = findRemoteForTool(tool) or tool:FindFirstChild("RemoteEvent")
+    if not remote then
+        reloadInProgress[tool] = nil
+        return
+    end
+    pcall(function() remote:FireServer("Reload") end)
+    task.wait(0.2)
+    local shots = getShotsLoadedForTool(tool)
+    if shots == 1 then
+        quickUnequipReequip(tool)
+    end
+    reloadInProgress[tool] = nil
+end
+local function tryReloadTool(tool)
+    if not tool then return end
+    if not AUTO_RELOAD_ENABLED then return end
+    if not isGun(tool) then return end
+    local shots = getShotsLoadedForTool(tool)
+    if tool.Name == "Horse Artillery Pistol" then
+        print("tryReloadTool: Checking Horse Artillery Pistol, shots =", shots)
+    end
+    local shouldReload = false
+    if tool.Name == "Nock Gun" then
+        shouldReload = shots < 7
+    elseif tool.Name == "Double Barrel Pistol" or tool.Name == "Horse Artillery Pistol" then
+        shouldReload = shots == 0
+    else
+        shouldReload = shots == 0
+    end
+    if tool.Name == "Horse Artillery Pistol" then
+        print("tryReloadTool: Horse Artillery Pistol shouldReload =", shouldReload)
+    end
+    if shouldReload then
+        if tool.Name == "Horse Artillery Pistol" then
+            print("tryReloadTool: Spawning reloadHorseArtilleryPistol")
+        end
+        if tool.Name == "Nock Gun" then
+            task.spawn(reloadNockGun, tool)
+        elseif tool.Name == "Double Barrel Pistol" then
+            task.spawn(reloadDoubleBarrelPistol, tool)
+        elseif tool.Name == "Horse Artillery Pistol" then
+            task.spawn(reloadHorseArtilleryPistol, tool)
+        else
+            task.spawn(reloadNormalGun, tool)
+        end
+    end
+end
+local function simulateReloadAnimations(tool, forcePlay)
+    if not tool then return end
+    local char = LocalPlayer and LocalPlayer.Character
+    if not char then return end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    local animator = humanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator", humanoid)
+    if not animator then return end
+    local function findAnimationByName(name)
+        if not name then return nil end
+        local animFolder = tool:FindFirstChild("Animations")
+        if animFolder then
+            local a = animFolder:FindFirstChild(name)
+            if a and a:IsA("Animation") then return a end
+        end
+        local modelRef = tool:FindFirstChild("Model") or tool:FindFirstChild("ModelReference")
+        if modelRef then
+            local model = (modelRef.Value and modelRef.Value) or modelRef
+            if model and model:IsA("Model") then
+                local mf = model:FindFirstChild("Animations")
+                if mf then
+                    local a = mf:FindFirstChild(name)
+                    if a and a:IsA("Animation") then return a end
+                end
+            end
+        end
+        local wsPlayers = Workspace:FindFirstChild("Players")
+        if wsPlayers and LocalPlayer and LocalPlayer.Name then
+            local playerFolder = wsPlayers:FindFirstChild(LocalPlayer.Name)
+            if playerFolder then
+                local toolFolder = playerFolder:FindFirstChild(tool.Name)
+                if toolFolder then
+                    local af = toolFolder:FindFirstChild("Animations")
+                    if af then
+                        local a = af:FindFirstChild(name)
+                        if a and a:IsA("Animation") then return a end
+                    end
+                end
+            end
+        end
+        for _, d in ipairs(tool:GetDescendants()) do
+            if d.Name == name and d:IsA("Animation") then return d end
+        end
+        return nil
+    end
+    local order = {"HammerDownLoaded", "ReloadP1", "ReloadP2", "HammerPull"}
+    local seq = {}
+    for _, name in ipairs(order) do
+        local anim = findAnimationByName(name)
+        if anim then table.insert(seq, anim) end
+    end
+    if #seq == 0 then return end
+    local function findCartridgePart(tool)
+        if not tool then return nil end
+        if tool:FindFirstChild("Cartridge") and tool.Cartridge:IsA("BasePart") then
+            return tool.Cartridge
+        end
+        local model = tool:FindFirstChild("Model") or tool:FindFirstChild("ModelReference")
+        if model and model.Value and model.Value:IsA("Model") then
+            local c = model.Value:FindFirstChild("Cartridge")
+            if c and c:IsA("BasePart") then return c end
+        elseif model and model:IsA("Model") then
+            local c = model:FindFirstChild("Cartridge")
+            if c and c:IsA("BasePart") then return c end
+        end
+        return nil
+    end
+    task.spawn(function()
+        local rightPart = nil
+        local char = LocalPlayer and LocalPlayer.Character
+        if char then
+            rightPart = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm") or char:FindFirstChild("RightLowerArm") or char:FindFirstChild("RightUpperArm") or char:FindFirstChild("RightArm")
+        end
+        local handCart = nil
+        local originalCartridge = findCartridgePart(tool)
+        for _, anim in ipairs(seq) do
+            local ok, track = pcall(function() return animator:LoadAnimation(anim) end)
+            if not ok or not track then
+                task.wait(0.02)
+            else
+                track.Priority = Enum.AnimationPriority.Action
+                local conns = {}
+                local function safeConnect(mName, fn)
+                    local succ, conn = pcall(function() return track:GetMarkerReachedSignal(mName):Connect(fn) end)
+                    if succ and conn then table.insert(conns, conn) end
+                end
+                safeConnect("HandCart", function()
+                    if handCart then return end
+                    local cartSrc = originalCartridge
+                    if not cartSrc then
+                        cartSrc = tool:FindFirstChild("Cartridge") or (tool:FindFirstChild("Model") and tool.Model:FindFirstChild("Cartridge"))
+                    end
+                    if cartSrc and rightPart then
+                        local ok2, cloned = pcall(function() return cartSrc:Clone() end)
+                        if ok2 and cloned then
+                            cloned.Parent = tool
+                            cloned.Transparency = 0
+                            local weld = Instance.new("Weld")
+                            weld.Part0 = rightPart
+                            weld.Part1 = cloned
+                            weld.C0 = CFrame.new(0, -0.85, -0.4)
+                            weld.Parent = cloned
+                            handCart = cloned
+                        end
+                    end
+                end)
+                safeConnect("HandCartOff", function()
+                    if handCart and handCart.Parent then
+                        handCart:Destroy()
+                        handCart = nil
+                    end
+                    if originalCartridge and originalCartridge:IsA("BasePart") then
+                        pcall(function() originalCartridge.Transparency = 0 end)
+                    end
+                end)
+                safeConnect("PourPowder", function()
+                    if handCart then
+                        local powder = handCart:FindFirstChild("Powder", true)
+                        if powder and powder:IsA("ParticleEmitter") then
+                            powder.Enabled = true
+                            task.delay(0.3, function() pcall(function() powder.Enabled = false end) end)
+                        end
+                    else
+                        local powder = tool:FindFirstChild("Powder", true)
+                        if powder and powder:IsA("ParticleEmitter") then
+                            powder.Enabled = true
+                            task.delay(0.3, function() pcall(function() powder.Enabled = false end) end)
+                        end
+                    end
+                end)
+                safeConnect("CartOff", function()
+                    if originalCartridge and originalCartridge:IsA("BasePart") then
+                        pcall(function() originalCartridge.Transparency = 1 end)
+                    end
+                end)
+                safeConnect("RipCart", function()
+                    if handCart then
+                        local ripped = handCart:FindFirstChild("Ripped")
+                        if ripped then
+                            ripped.Transparency = 0
+                            handCart.Transparency = 1
+                        end
+                    end
+                end)
+                safeConnect("CartridgeStart", function()
+                    if originalCartridge and originalCartridge:IsA("BasePart") then
+                        pcall(function()
+                            if originalCartridge.Parent and originalCartridge.Parent:IsA("Model") then
+                                for _, w in ipairs(originalCartridge:GetJoints()) do
+                                    if w:IsA("Weld") then
+                                        w.C1 = w.C1 * CFrame.new(0, -0.03, 0)
+                                        break
+                                    end
+                                end
+                            end
+                        end)
+                    end
+                end)
+                track:Play(0.02, 1, 1)
+                pcall(function() track.Stopped:Wait() end)
+                for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+                task.wait(0.02)
+            end
+        end
+        if handCart and handCart.Parent then
+            pcall(function() handCart:Destroy() end)
+            handCart = nil
+        end
+    end)
+end
+local function watchShotsForTool(tool)
+    if not tool then return end
+    if not isGun(tool) then return end
+    if watchedTools[tool] then return end
+    watchedTools[tool] = true
+    local function attach(shotsObj, reloadRemote)
+        if not shotsObj then return end
+        local prevVal = (shotsObj.Value ~= nil) and shotsObj.Value or 0
+        if AUTO_RELOAD_ENABLED then
+            local shouldReload = false
+            if tool.Name == "Nock Gun" then
+                shouldReload = prevVal < 7
+            elseif tool.Name == "Double Barrel Pistol" or tool.Name == "Horse Artillery Pistol" then
+                shouldReload = prevVal == 0
+            else
+                shouldReload = prevVal == 0
+            end
+            if tool.Name == "Horse Artillery Pistol" then
+                print("watchShotsForTool INITIAL: Horse Artillery Pistol detected, prevVal =", prevVal, ", shouldReload =", shouldReload, ", reloadRemote =", reloadRemote ~= nil)
+            end
+            if shouldReload and reloadRemote then
+                if tool.Name == "Horse Artillery Pistol" then
+                    print("watchShotsForTool INITIAL: Spawning reloadHorseArtilleryPistol")
+                end
+                if tool.Name == "Nock Gun" then
+                    task.spawn(reloadNockGun, tool)
+                elseif tool.Name == "Double Barrel Pistol" then
+                    task.spawn(reloadDoubleBarrelPistol, tool)
+                elseif tool.Name == "Horse Artillery Pistol" then
+                    task.spawn(reloadHorseArtilleryPistol, tool)
+                else
+                    task.spawn(reloadNormalGun, tool)
+                end
+            end
+        end
+        local reloadDebounce = false
+        local conn
+        conn = shotsObj.Changed:Connect(function()
+            local v = shotsObj.Value
+            if AUTO_RELOAD_ENABLED and type(v) == "number" and type(prevVal) == "number" and v > prevVal then
+                for i = prevVal + 1, v do task.spawn(notifyReload) end
+            end
+            local shouldReload = false
+            if tool.Name == "Nock Gun" then
+                shouldReload = v < 7
+            elseif tool.Name == "Double Barrel Pistol" or tool.Name == "Horse Artillery Pistol" then
+                shouldReload = v == 0
+            else
+                shouldReload = v == 0
+            end
+            if shouldReload and reloadRemote and not reloadDebounce then
+                reloadDebounce = true
+                if AUTO_RELOAD_ENABLED then
+                    if tool.Name == "Nock Gun" then
+                        task.spawn(reloadNockGun, tool)
+                    elseif tool.Name == "Double Barrel Pistol" then
+                        task.spawn(reloadDoubleBarrelPistol, tool)
+                    elseif tool.Name == "Horse Artillery Pistol" then
+                        task.spawn(reloadHorseArtilleryPistol, tool)
+                    else
+                        task.spawn(reloadNormalGun, tool)
+                    end
+                end
+                task.delay(1.2, function() reloadDebounce = false end)
+            end
+            prevVal = v
+        end)
+        tool.AncestryChanged:Connect(function(_, parent)
+            if not parent and conn then conn:Disconnect() end
+        end)
+    end
+    local shotsInst = tool:FindFirstChild("ShotsLoaded")
+    local remoteInst = tool:FindFirstChild("RemoteEvent")
+    if shotsInst and (shotsInst:IsA("IntValue") or shotsInst:IsA("NumberValue")) then
+        attach(shotsInst, remoteInst); return
+    end
+    local wsPlayersFolder = Workspace:FindFirstChild("Players")
+    if not wsPlayersFolder then return end
+    local playerFolder = wsPlayersFolder:FindFirstChild(LocalPlayer.Name)
+    if not playerFolder then return end
+    local toolFolder = playerFolder:FindFirstChild(tool.Name)
+    local serverRemote = (toolFolder and toolFolder:FindFirstChild("RemoteEvent")) or remoteInst
+    if toolFolder then
+        local shots = toolFolder:FindFirstChild("ShotsLoaded")
+        if shots and (shots:IsA("IntValue") or shots:IsA("NumberValue")) then attach(shots, serverRemote); return end
+    end
+end
+local function smoothLookAtDynamic(rootPart, getPosFunc, duration)
+    if not rootPart or not getPosFunc then return end
+    local start = tick()
+    local startCFrame = rootPart.CFrame
+    local ok, initTarget = pcall(getPosFunc)
+    if not ok or not initTarget then return end
+    local function easeInOutQuint(t)
+        if t < 0.5 then
+            return 16 * t * t * t * t * t
+        else
+            local f = (2 * t) - 2
+            return 0.5 * f * f * f * f * f + 1
+        end
+    end
+    while tick() - start < duration do
+        if not rootPart.Parent then return end
+        local curPos = nil
+        pcall(function() curPos = getPosFunc() end)
+        if not curPos then curPos = initTarget end
+        local desired = CFrame.new(rootPart.Position, Vector3.new(curPos.X, rootPart.Position.Y, curPos.Z))
+        local t = math.clamp((tick() - start) / duration, 0, 1)
+        local smoothT = easeInOutQuint(t)
+        local lerped = startCFrame:Lerp(desired, smoothT)
+        local safeCFrame = CFrame.new(rootPart.Position, rootPart.Position + lerped.LookVector)
+        pcall(function() rootPart.CFrame = safeCFrame end)
+        RunService.RenderStepped:Wait()
+    end
+    local finalPos = nil
+    pcall(function() finalPos = getPosFunc() end)
+    if finalPos then pcall(function() rootPart.CFrame = CFrame.new(rootPart.Position, rootPart.Position + CFrame.new(rootPart.Position, Vector3.new(finalPos.X, rootPart.Position.Y, finalPos.Z)).LookVector) end) end
+end
+local animationCache = {}
+local function playAnimation(animId, animator)
+    if not animId or not animator then return nil end
+    local cacheKey = animId .. tostring(animator)
+    if animationCache[cacheKey] and animationCache[cacheKey].Parent then
+        local track = animationCache[cacheKey]
+        if track.IsPlaying then track:Stop(0.02) end
+        track:Play(0.02, 1, 1)
+        return track
+    end
+    local ok, track = pcall(function()
+        local anim = Instance.new("Animation")
+        anim.AnimationId = animId
+        return animator:LoadAnimation(anim)
+    end)
+    if not ok or not track then return nil end
+    track.Priority = Enum.AnimationPriority.Action
+    track:Play(0.02, 1, 1)
+    animationCache[cacheKey] = track
+    return track
+end
+local function aimThenShootGun(targetModel, initialPart, tool, isPlayerTarget, savedPlayer)
+    if not targetModel or not targetModel.Parent then return end
+    if not initialPart or not initialPart.Parent or not initialPart:IsA("BasePart") then return end
+    if not tool or not tool.Parent or not tool:IsDescendantOf(LocalPlayer.Character) then return end
+    if not isGun(tool) then return end
+    local zombieType = GetZombieTypeFromModel and GetZombieTypeFromModel(targetModel) or nil
+    if zombieType == "Bomber" and shouldSkipBomberForSafety(targetModel, zombieType) then
+        return
+    end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    local animator = humanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator", humanoid)
+    pcall(watchShotsForTool, tool)
+    local remote = tool:FindFirstChild("RemoteEvent") or findRemoteForTool(tool)
+    local animFolder = tool:FindFirstChild("Animations")
+    local animAId, animBId, fireAnimId
+    if animFolder then
+        local aim = animFolder:FindFirstChild("Aim")
+        local aiming = animFolder:FindFirstChild("Aiming")
+        local fire = animFolder:FindFirstChild("Fire")
+        if aim and aim:IsA("Animation") then animAId = aim.AnimationId end
+        if aiming and aiming:IsA("Animation") then animBId = aiming.AnimationId end
+        if fire and fire:IsA("Animation") then fireAnimId = fire.AnimationId end
+    end
+    animAId = animAId or "rbxassetid://83511222574103"
+    animBId = animBId or "rbxassetid://136849639865723"
+    local function getAimOrigin()
+        if LocalPlayer and LocalPlayer.Character and LocalPlayer.Character.Parent then
+            local head = LocalPlayer.Character:FindFirstChild("Head")
+            if head and head:IsA("BasePart") then return head.Position end
+        end
+        local cam = Workspace.CurrentCamera
+        if cam then return cam.CFrame.Position end
+        return nil
+    end
+    local currentTargetPart = initialPart
+    local currentTargetModel = targetModel
+    local function resolveAimPos(part)
+        if not part or not part.Parent or not part:IsA("BasePart") then return nil end
+        if isPlayerTarget then
+            return getAimPosition(part, { skipPrediction = true })
+        end
+        return getAimPosition(part)
+    end
+    local origin = getAimOrigin()
+    if CHECK_WALLS and origin and currentTargetPart and currentTargetPart.Parent then
+        local baseIgnore = buildBaseIgnore()
+        local hasClear = hasClearShotOnPart(origin, currentTargetPart, currentTargetModel, baseIgnore)
+        if not hasClear then return end
+    end
+    local finalHum = currentTargetModel and currentTargetModel:FindFirstChildOfClass("Humanoid")
+    if finalHum and finalHum.Health and finalHum.Health < 1 then return end
+    if zombieType == "Bomber" and shouldSkipBomberForSafety(currentTargetModel, zombieType) then
+        return
+    end
+    autoShootCurrentTarget = currentTargetPart
+    autoShootCurrentModel = currentTargetModel
+    autoShootActive = true
+    local trackA, trackB, fireTrack
+    local totalDelay = AUTO_SHOOT_DELAY or 0.5
+    local rotationDuration = math.max(totalDelay * 0.7, 0.2)
+    trackA = playAnimation(animAId, animator)
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if root then
+        local originalAutoRotate = humanoid.AutoRotate
+        humanoid.AutoRotate = false
+        local function getPosFunc()
+            if currentTargetPart and currentTargetPart.Parent then
+                return resolveAimPos(currentTargetPart)
+            end
+            return nil
+        end
+        task.spawn(function()
+            pcall(function() smoothLookAtDynamic(root, getPosFunc, rotationDuration) end)
+        end)
+        task.wait(0.15)
+        if trackA and trackA.IsPlaying then
+            pcall(function() trackA:Stop(0.1) end)
+        end
+        trackB = playAnimation(animBId, animator)
+        local remainingWait = totalDelay - 0.15 - 0.03
+        if remainingWait > 0 then
+            task.wait(remainingWait)
+        end
+        humanoid.AutoRotate = originalAutoRotate
+    end
+    local WAIT_TIMEOUT = 3.0
+    local waited = 0
+    local POLL_INTERVAL = 0.06
+    local shotsNow = getShotsLoadedForTool(tool)
+    while (not shotsNow or shotsNow < 1) and waited < WAIT_TIMEOUT do
+        if not tool or not tool.Parent then break end
+        if not (USER_AUTO_SHOOT_TOGGLE or AUTO_SAVE_PLAYERS_ENABLED) then break end
+        task.wait(POLL_INTERVAL)
+        waited = waited + POLL_INTERVAL
+        shotsNow = getShotsLoadedForTool(tool)
+    end
+    if not shotsNow or shotsNow < 1 then
+        if trackB and trackB.IsPlaying then pcall(function() trackB:Stop(0.1) end) end
+        autoShootActive = false
+        autoShootCurrentTarget = nil
+        autoShootCurrentModel = nil
+        return
+    end
+    if not currentTargetPart or not currentTargetPart.Parent then
+        if trackB and trackB.IsPlaying then pcall(function() trackB:Stop(0.1) end) end
+        autoShootActive = false
+        autoShootCurrentTarget = nil
+        autoShootCurrentModel = nil
+        return
+    end
+    if not currentTargetModel or not currentTargetModel.Parent then
+        if trackB and trackB.IsPlaying then pcall(function() trackB:Stop(0.1) end) end
+        autoShootActive = false
+        autoShootCurrentTarget = nil
+        autoShootCurrentModel = nil
+        return
+    end
+    local hum = currentTargetModel:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health and hum.Health < 1 then
+        if trackB and trackB.IsPlaying then pcall(function() trackB:Stop(0.1) end) end
+        autoShootActive = false
+        autoShootCurrentTarget = nil
+        autoShootCurrentModel = nil
+        return
+    end
+    if fireAnimId then
+        fireTrack = playAnimation(fireAnimId, animator)
+    end
+    pcall(function()
+        local modelRef = char:FindFirstChild("Model") or char
+        local t = Workspace:GetServerTimeNow()
+        local aimPos = resolveAimPos(currentTargetPart)
+        if remote and aimPos then
+            remote:FireServer("Fire", modelRef, aimPos, t)
+        end
+    end)
+    if fireTrack then task.delay(0.35, function() pcall(function() fireTrack:Stop(0.07) end) end) end
+    if trackB and trackB.IsPlaying then pcall(function() trackB:Stop(0.1) end) end
+    task.delay(0.1, function()
+        autoShootActive = false
+        autoShootCurrentTarget = nil
+        autoShootCurrentModel = nil
+    end)
+end
+local function instantShootGun(targetModel, initialPart, tool, skipPrediction)
+    if not targetModel or not targetModel.Parent then return end
+    if not initialPart or not initialPart.Parent or not initialPart:IsA("BasePart") then return end
+    if not tool or not tool.Parent or not tool:IsDescendantOf(LocalPlayer.Character) then return end
+    if not isGun(tool) then return end
+    local zombieType = GetZombieTypeFromModel and GetZombieTypeFromModel(targetModel) or nil
+    if zombieType == "Bomber" and shouldSkipBomberForSafety(targetModel, zombieType) then
+        return
+    end
+    pcall(watchShotsForTool, tool)
+    local char = LocalPlayer.Character
+    if not char then return end
+    local origin = (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head") and LocalPlayer.Character.Head.Position) or (Workspace.CurrentCamera and Workspace.CurrentCamera.CFrame.Position)
+    if origin and CHECK_WALLS then
+        local baseIgnore = buildBaseIgnore()
+        local hasClear = hasClearShotOnPart(origin, initialPart, targetModel, baseIgnore)
+        if not hasClear then return end
+    end
+    if targetModel and (not targetModel.Parent) then return end
+    local hum = (targetModel and targetModel:FindFirstChildOfClass("Humanoid")) or nil
+    if hum and hum.Health and hum.Health < 1 then return end
+    autoShootCurrentTarget = initialPart
+    autoShootCurrentModel = targetModel
+    autoShootActive = true
+    local aimPos = getAimPosition(initialPart, skipPrediction and { skipPrediction = true }) or initialPart.Position
+    pcall(function()
+        local remote = tool:FindFirstChild("RemoteEvent") or findRemoteForTool(tool)
+        local modelRef = char:FindFirstChild("Model") or char
+        local t = Workspace:GetServerTimeNow()
+        if remote and initialPart and initialPart.Parent then
+            remote:FireServer("Fire", modelRef, aimPos, t)
+        end
+    end)
+    task.delay(0.05, function()
+        autoShootActive = false
+        autoShootCurrentTarget = nil
+        autoShootCurrentModel = nil
+    end)
+end
+local function cleanupConnections()
+    for _, conn in ipairs(activeConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    activeConnections = {}
+    watchedTools = {}
+    isAiming = false
+end
+local mainLoopRunning = false
+local function startMainLoop()
+    if mainLoopRunning then return end
+    mainLoopRunning = true
+    task.spawn(function()
+        while mainLoopRunning do
+            local equippedTool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
+            local equippedIsGun = equippedTool and isGun(equippedTool)
+            local shotsForEquipped = (equippedTool and equippedIsGun) and getShotsLoadedForTool(equippedTool) or 0
+            local hasSilentAimSelection = SILENT_AIM_ENABLED and (SilentAimSelectedTypes and #SilentAimSelectedTypes > 0)
+            local usingSilentAimForZombies = hasSilentAimSelection
+            local usingSilentAimForSave = SILENT_AIM_ENABLED and SILENT_AIM_SAVE_PLAYERS_ENABLED
+            local shouldAutoShootZombies = USER_AUTO_SHOOT_TOGGLE and (not usingSilentAimForZombies)
+            local shouldAutoSavePlayers = AUTO_SAVE_PLAYERS_ENABLED and (not usingSilentAimForSave)
+            local effectiveAutoShoot = (equippedTool ~= nil) and equippedIsGun and (shotsForEquipped >= 1) and (shouldAutoShootZombies or shouldAutoSavePlayers)
+            if AUTO_RELOAD_ENABLED and equippedTool and equippedIsGun then
+            pcall(tryReloadTool, equippedTool)
+            end
+            if effectiveAutoShoot and not isAiming then
+            local targetPart, targetModel, isPlayerTarget, savedPlayer = nil, nil, false, nil
+            if shouldAutoSavePlayers then
+                local ok, zPart, zModel, pl = pcall(getNearestZombieToSavePlayer, MAX_SAVE_PLAYERS_RANGE)
+                if ok and zPart and zModel then targetPart, targetModel, isPlayerTarget, savedPlayer = zPart, zModel, true, pl end
+            end
+            if not targetPart and shouldAutoShootZombies then
+                if SelectedShootTypes and #SelectedShootTypes > 0 then
+                local sPart, sModel, sType = getNearestSelectedZombie(MAX_TARGET_RANGE)
+                if sPart and sModel then targetPart, targetModel, isPlayerTarget = sPart, sModel, false end
+                end
+            end
+            if targetPart and targetModel then
+                isAiming = true
+                pcall(function()
+                updateActiveTargetVisuals(targetModel, targetPart)
+                end)
+                local baseIgnoreCache = nil
+                local function targetHasClearLOS(customIgnore)
+                if not CHECK_WALLS then return true end
+                if not targetPart or not targetPart.Parent then return false end
+                local originPos = getWallCheckOrigin()
+                if not originPos then return true end
+                if customIgnore then
+                    baseIgnoreCache = customIgnore
+                elseif not baseIgnoreCache then
+                    baseIgnoreCache = buildBaseIgnore()
+                end
+                local ignoreList = customIgnore or baseIgnoreCache
+                local ok, res = pcall(function()
+                    return hasClearShotOnPart(originPos, targetPart, targetModel, ignoreList)
+                end)
+                return ok and res
+                end
+                local appearDelay = (isPlayerTarget and INSTANT_SAVE_PLAYERS_ENABLED and 0.1)
+                or (not isPlayerTarget and INSTANT_SHOOT_ENABLED and 0.1)
+                or APPEAR_DELAY
+                local startT = tick()
+                local aborted = false
+                local targetZombieType = GetZombieTypeFromModel and GetZombieTypeFromModel(targetModel) or nil
+                while tick() - startT < appearDelay do
+                if not targetModel or not targetModel.Parent then aborted = true; break end
+                local hum = (targetModel and targetModel:FindFirstChildOfClass("Humanoid")) or nil
+                if hum and hum.Health and hum.Health < 1 then aborted = true; break end
+                if targetZombieType == "Bomber" and shouldSkipBomberForSafety(targetModel, targetZombieType) then
+                    aborted = true; break
+                end
+                if isPlayerTarget and savedPlayer then
+                    local wsPlayersFolder = Workspace:FindFirstChild("Players")
+                    local playerFolder = (wsPlayersFolder and wsPlayersFolder:FindFirstChild(savedPlayer.Name)) or nil
+                    local stillGrabbed = false
+                    if playerFolder then
+                    local userStates = playerFolder:FindFirstChild("UserStates")
+                    if userStates then
+                        local grabbedVal = userStates:FindFirstChild("Grabbed")
+                        local pinVal = userStates:FindFirstChild("Pin")
+                        local grabbed = (grabbedVal and tonumber(grabbedVal.Value) or 0) ~= 0
+                        local pinState = (pinVal and pinVal.Value) or ""
+                        local pinned = (pinState == "RunnerAttack" or pinState == "RunnerClaw" or pinState == "RunnerVomit")
+                        stillGrabbed = grabbed or pinned
+                    end
+                    end
+                    local plChar = savedPlayer.Character
+                    local plHum = plChar and plChar:FindFirstChildOfClass("Humanoid")
+                    if (not stillGrabbed) or (not plHum) or (plHum.Health < 1) then aborted = true; break end
+                end
+                if CHECK_WALLS then
+                    if not targetHasClearLOS() then
+                    aborted = true
+                    break
+                    end
+                end
+                task.wait(0.03)
+                end
+                if aborted then
+                pcall(function() clearActiveTargetVisuals() end)
+                isAiming = false
+                else
+                if CHECK_WALLS then
+                    local freshIgnore = buildBaseIgnore()
+                    if not targetHasClearLOS(freshIgnore) then
+                    pcall(function() clearActiveTargetVisuals() end)
+                    isAiming = false
+                    end
+                end
+                if isAiming and targetZombieType == "Bomber" and shouldSkipBomberForSafety(targetModel, targetZombieType) then
+                    pcall(function() clearActiveTargetVisuals() end)
+                    isAiming = false
+                end
+                if isAiming then
+                    if equippedTool and equippedTool.Parent and isGun(equippedTool) then
+                    local currentTool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
+                    if currentTool and currentTool == equippedTool then
+                        task.spawn(function()
+                        local success, err = pcall(function()
+                            if (isPlayerTarget and INSTANT_SAVE_PLAYERS_ENABLED) or (not isPlayerTarget and INSTANT_SHOOT_ENABLED) then
+                            instantShootGun(targetModel, targetPart, currentTool, isPlayerTarget)
+                            else
+                            aimThenShootGun(targetModel, targetPart, currentTool, isPlayerTarget, savedPlayer)
+                            end
+                        end)
+                        if not success then
+                            warn("Error in shoot function: " .. tostring(err))
+                        end
+                        task.wait(0.05)
+                        pcall(function() clearActiveTargetVisuals() end)
+                        isAiming = false
+                        end)
+                    else
+                        pcall(function() clearActiveTargetVisuals() end)
+                        isAiming = false
+                    end
+                    else
+                    pcall(function() clearActiveTargetVisuals() end)
+                    isAiming = false
+                    end
+                end
+                end
+            end
+            end
+            task.wait(CHECK_INTERVAL)
+        end
+    end)
+end
+local function monitorCharacterTools(char)
+    if not char then return end
+    cleanupConnections()
+    for _, c in ipairs(char:GetChildren()) do
+        if c:IsA("Tool") then
+            if isGun(c) then
+                pcall(watchShotsForTool, c)
+                pcall(tryReloadTool, c)
+                local ok, eqConn = pcall(function()
+                    return c.Equipped:Connect(function()
+                        pcall(tryReloadTool, c)
+                    end)
+                end)
+                if ok and eqConn then table.insert(activeConnections, eqConn) end
+            end
+            pcall(function() attachHandMortarWatcher(c) end)
+        end
+    end
+    local childAddedConn = char.ChildAdded:Connect(function(child)
+        if child and child:IsA("Tool") then
+            if isGun(child) then
+                pcall(watchShotsForTool, child)
+                pcall(tryReloadTool, child)
+                local ok, eqConn = pcall(function()
+                    return child.Equipped:Connect(function()
+                        pcall(tryReloadTool, child)
+                    end)
+                end)
+                if ok and eqConn then table.insert(activeConnections, eqConn) end
+            end
+            pcall(function() attachHandMortarWatcher(child) end)
+        end
+    end)
+    table.insert(activeConnections, childAddedConn)
+end
+local function setupCharacterMonitoring()
+    for i, conn in ipairs(activeConnections) do
+        if conn == characterAddedConn then
+            pcall(function() conn:Disconnect() end)
+            table.remove(activeConnections, i)
+            break
+        end
+    end
+    characterAddedConn = LocalPlayer.CharacterAdded:Connect(monitorCharacterTools)
+    table.insert(activeConnections, characterAddedConn)
+    if LocalPlayer.Character then
+        monitorCharacterTools(LocalPlayer.Character)
+    end
+end
+setupCharacterMonitoring()
+startMainLoop()
+local silentAimUpdateConn = nil
+local function startSilentAimLoop()
+    if silentAimUpdateConn then return end
+    silentAimUpdateConn = RunService.Heartbeat:Connect(function()
+        local hasZombieSelection = SILENT_AIM_ENABLED and (SilentAimSelectedTypes and #SilentAimSelectedTypes > 0)
+        if not (hasZombieSelection or SILENT_AIM_SAVE_PLAYERS_ENABLED or SILENT_AIM_BOMBER_NEAR_ENABLED) then
+            silentAimCurrentTarget = nil
+            silentAimCurrentModel = nil
+            silentAimIsPlayerTarget = false
+            silentAimSavedPlayer = nil
+            return
+        end
+        local equippedTool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
+        local equippedIsGun = equippedTool and isGun(equippedTool)
+        if not equippedIsGun then
+            silentAimCurrentTarget = nil
+            silentAimCurrentModel = nil
+            return
+        end
+        local targetPart, targetModel, isPlayerTarget, savedPlayer = nil, nil, false, nil
+        if SILENT_AIM_SAVE_PLAYERS_ENABLED and AUTO_SAVE_PLAYERS_ENABLED then
+            local ok, zPart, zModel, pl = pcall(getNearestZombieToSavePlayer, MAX_SAVE_PLAYERS_RANGE)
+            if ok and zPart and zModel then
+                targetPart, targetModel, isPlayerTarget, savedPlayer = zPart, zModel, true, pl
+            end
+        end
+        if not targetPart and hasZombieSelection then
+            if SilentAimSelectedTypes and #SilentAimSelectedTypes > 0 then
+                local sPart, sModel, sType = getNearestSelectedZombie(MAX_TARGET_RANGE, SilentAimSelectedTypes, SILENT_AIM_USE_FOV, isWorldPosInSilentAimFov)
+                if sPart and sModel then
+                    local zombieType = GetZombieTypeFromModel and GetZombieTypeFromModel(sModel) or nil
+                    local skipBomber = false
+                    if zombieType == "Bomber" then
+                        if SILENT_AIM_BOMBER_NEAR_ENABLED then
+                            if not isBomberNearTeammate(sModel, BOMBER_SAFE_RADIUS) then
+                                skipBomber = true
+                            end
+                        elseif shouldSkipBomberForSafety(sModel, zombieType) then
+                            skipBomber = true
+                        end
+                    end
+                    if not skipBomber then
+                        targetPart, targetModel, isPlayerTarget = sPart, sModel, false
+                    end
+                end
+            end
+        end
+        if targetPart and CHECK_WALLS then
+            local origin = getWallCheckOrigin()
+            if origin then
+                local baseIgnore = buildBaseIgnore()
+                local hasClear = hasClearShotOnPart(origin, targetPart, targetModel, baseIgnore)
+                if not hasClear then
+                    targetPart = nil
+                    targetModel = nil
+                end
+            end
+        end
+        if targetPart and SILENT_AIM_USE_FOV then
+            local aimPos = getAimPosition(targetPart) or targetPart.Position
+            if not isWorldPosInSilentAimFov(aimPos) then
+                targetPart = nil
+                targetModel = nil
+            end
+        end
+        silentAimCurrentTarget = targetPart
+        silentAimCurrentModel = targetModel
+        silentAimIsPlayerTarget = isPlayerTarget
+        silentAimSavedPlayer = savedPlayer
+        if TARGET_ESP_ENABLED and targetPart and targetModel then
+            pcall(function() updateActiveTargetVisuals(targetModel, targetPart) end)
+        elseif TARGET_ESP_ENABLED then
+            pcall(function() clearActiveTargetVisuals() end)
+        end
+        if SILENT_AIM_AUTO_AIM and targetPart and targetPart.Parent then
+            pcall(function()
+                local char = LocalPlayer.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local aimPos = targetPart.Position
+                    local flatAimPos = Vector3.new(aimPos.X, hrp.Position.Y, aimPos.Z)
+                    local lookDir = (flatAimPos - hrp.Position)
+                    if lookDir.Magnitude > 0.1 then
+                        hrp.CFrame = CFrame.new(hrp.Position, flatAimPos)
+                    end
+                end
+            end)
+        end
+    end)
+end
+startSilentAimLoop()
+local silentAimOldNamecall = nil
+local silentAimOldIndex = nil
+local inNamecallHook = false
+local inIndexHook = false
+local function setupSilentAimHooks()
+    if silentAimOldNamecall then return end
+    if type(hookmetamethod) ~= "function" then
+        warn("Silent Aim: hookmetamethod not available - Silent Aim will not work on this executor")
+        return
+    end
+    local checkcaller = checkcaller or function() return false end
+    local Mouse = LocalPlayer:GetMouse()
+    pcall(function()
+        silentAimOldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            if inNamecallHook then
+                return silentAimOldNamecall(self, ...)
+            end
+            local method = getnamecallmethod()
+            local args = {...}
+            if method ~= "Raycast" or (self ~= Workspace and self.ClassName ~= "Workspace") then
+                return silentAimOldNamecall(self, ...)
+            end
+            if checkcaller() then
+                return silentAimOldNamecall(self, ...)
+            end
+            local targetToUse = nil
+            if autoShootActive and autoShootCurrentTarget then
+                inNamecallHook = true
+                local hasParent = autoShootCurrentTarget.Parent ~= nil
+                inNamecallHook = false
+                if hasParent then
+                    targetToUse = autoShootCurrentTarget
+                end
+            elseif (SILENT_AIM_ENABLED or SILENT_AIM_SAVE_PLAYERS_ENABLED or SILENT_AIM_BOMBER_NEAR_ENABLED) and silentAimCurrentTarget then
+                targetToUse = silentAimCurrentTarget
+            end
+            if targetToUse then
+                inNamecallHook = true
+                local origin = args[1]
+                local aimPos = targetToUse.Position
+                inNamecallHook = false
+                local dir = (aimPos - origin)
+                args[2] = dir.Unit * (dir.Magnitude + 10)
+                return silentAimOldNamecall(self, unpack(args))
+            end
+            return silentAimOldNamecall(self, ...)
+        end)
+    end)
+    pcall(function()
+        silentAimOldIndex = hookmetamethod(game, "__index", function(self, index)
+            if inIndexHook then
+                return silentAimOldIndex(self, index)
+            end
+            if self ~= Mouse or (index ~= "Hit" and index ~= "Target") then
+                return silentAimOldIndex(self, index)
+            end
+            if checkcaller() then
+                return silentAimOldIndex(self, index)
+            end
+            local targetToUse = nil
+            if autoShootActive and autoShootCurrentTarget then
+                inIndexHook = true
+                local hasParent = autoShootCurrentTarget.Parent ~= nil
+                inIndexHook = false
+                if hasParent then
+                    targetToUse = autoShootCurrentTarget
+                end
+            elseif (SILENT_AIM_ENABLED or SILENT_AIM_SAVE_PLAYERS_ENABLED or SILENT_AIM_BOMBER_NEAR_ENABLED) and silentAimCurrentTarget then
+                targetToUse = silentAimCurrentTarget
+            end
+            if targetToUse then
+                inIndexHook = true
+                local aimPos = targetToUse.Position
+                local aimCFrame = targetToUse.CFrame
+                inIndexHook = false
+                return index == "Hit" and aimCFrame or targetToUse
+            end
+            return silentAimOldIndex(self, index)
+        end)
+    end)
+end
+setupSilentAimHooks()
+local GunTab = Main1Section and Main1Section:Tab({ Title = "Gun Modifiers", Icon = "target" }) or nil
+local GunModSection, AutoShootSection, SilentAimSection, SavePlayersSection, SafetyTrollingSection, TargetsSection
+local GunTab_InitComplete = false
+local silentAimFovGui = nil
+local silentAimFovCircle = nil
+local silentAimFovUpdateConn = nil
+local SilentAimSavePlayersWhitelist = {}
+local SilentAimBomberNearWhitelist = {}
+local AUTO_SAVE_USE_FOV = false
+local AUTO_SAVE_SHOW_FOV = false
+local AUTO_SAVE_MOBILE_FOV = false
+local AUTO_SAVE_FOV_SIZE = 50
+local autoSaveFovGui = nil
+local autoSaveFovCircle = nil
+local autoSaveFovUpdateConn = nil
+local DontShootNearWhitelistDropdown = nil
+local ShootBomberNearWhitelistDropdown = nil
+local ShootBomberNearTeammatesToggle = nil
+local function getAvailablePlayersExcluding(excludeList)
+    local names = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local isExcluded = false
+            for _, excludedName in ipairs(excludeList or {}) do
+                if player.Name == excludedName or player.DisplayName == excludedName then
+                    isExcluded = true
+                    break
+                end
+            end
+            if not isExcluded then
+                table.insert(names, player.Name)
+            end
+        end
+    end
+    return names
+end
+local isRefreshingWhitelistDropdowns = false
+local function refreshWhitelistDropdowns()
+    if isRefreshingWhitelistDropdowns then return end
+    isRefreshingWhitelistDropdowns = true
+    pcall(function()
+        if DontShootNearWhitelistDropdown and DontShootNearWhitelistDropdown.Refresh then
+            local availableForDontShoot = getAvailablePlayersExcluding(ShootBomberNearWhitelist)
+            table.insert(availableForDontShoot, 1, "None")
+            DontShootNearWhitelistDropdown:Refresh(availableForDontShoot)
+        end
+    end)
+    pcall(function()
+        if ShootBomberNearWhitelistDropdown and ShootBomberNearWhitelistDropdown.Refresh then
+            local availableForShootNear = getAvailablePlayersExcluding(BomberSafetyWhitelist)
+            table.insert(availableForShootNear, 1, "None")
+            ShootBomberNearWhitelistDropdown:Refresh(availableForShootNear)
+        end
+    end)
+    isRefreshingWhitelistDropdowns = false
+end
+local function lockToggleWithNotify(toggle, title, reason)
+    pcall(function()
+        if WindUI then
+            WindUI:Notify({
+                Title = title,
+                Content = reason,
+                Duration = 3,
+                Icon = "lock",
+            })
+        end
+    end)
+    pcall(function()
+        if toggle and toggle.Lock then toggle:Lock() end
+    end)
+end
+local function unlockToggle(toggle)
+    pcall(function()
+        if toggle and toggle.Unlock then toggle:Unlock() end
+    end)
+end
+local function ensureSilentAimFovGui()
+    if silentAimFovGui and silentAimFovGui.Parent then
+        return silentAimFovGui, silentAimFovCircle
+    end
+    local pg = LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui")
+    silentAimFovGui = Instance.new("ScreenGui")
+    silentAimFovGui.Name = "SilentAim_FovGui"
+    silentAimFovGui.ResetOnSpawn = false
+    silentAimFovGui.Parent = pg
+    local circle = Instance.new("Frame")
+    circle.Name = "Circle"
+    circle.AnchorPoint = Vector2.new(0.5, 0.5)
+    circle.Position = UDim2.new(0.5, 0, 0.5, 0)
+    circle.BackgroundTransparency = 1
+    circle.BorderSizePixel = 0
+    circle.Parent = silentAimFovGui
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = circle
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 2
+    stroke.Color = Color3.fromRGB(0, 200, 255)
+    stroke.Transparency = 0.2
+    stroke.Parent = circle
+    silentAimFovCircle = circle
+    return silentAimFovGui, silentAimFovCircle
+end
+local function getSilentAimFovScreenCenter()
+    local cam = Workspace.CurrentCamera
+    if not cam then return Vector2.new(0, 0) end
+    local viewportSize = cam.ViewportSize
+    if SILENT_AIM_MOBILE_FOV or UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
+        return Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+    end
+    local mousePos = UserInputService:GetMouseLocation()
+    local inset = GuiService:GetGuiInset()
+    return mousePos - Vector2.new(inset.X, inset.Y)
+end
+local function ensureSilentAimFovUpdateLoop()
+    if silentAimFovUpdateConn then return end
+    silentAimFovUpdateConn = RunService.RenderStepped:Connect(function()
+        if not (SILENT_AIM_USE_FOV and SILENT_AIM_SHOW_FOV) then
+            if silentAimFovGui then silentAimFovGui.Enabled = false end
+            return
+        end
+        local gui, circle = ensureSilentAimFovGui()
+        gui.Enabled = true
+        local cam = Workspace.CurrentCamera
+        if not cam then return end
+        local viewportSize = cam.ViewportSize
+        local clamped = math.clamp(SILENT_AIM_FOV_SIZE, FOV_MIN_DEG, FOV_MAX_DEG)
+        local sizePx = (clamped / 40) * 250
+        circle.Size = UDim2.new(0, sizePx, 0, sizePx)
+        local center = getSilentAimFovScreenCenter()
+        local xScale = center.X / viewportSize.X
+        local yScale = center.Y / viewportSize.Y
+        circle.Position = UDim2.new(xScale, 0, yScale, 0)
+    end)
+end
+local function updateSilentAimFovCircle()
+    if not (SILENT_AIM_USE_FOV and SILENT_AIM_SHOW_FOV) then
+        if silentAimFovGui then silentAimFovGui.Enabled = false end
+        return
+    end
+    ensureSilentAimFovUpdateLoop()
+end
+isWorldPosInSilentAimFov = function(worldPos)
+    if not SILENT_AIM_USE_FOV then return true end
+    local cam = Workspace.CurrentCamera
+    if not cam then return true end
+    local viewportSize = cam.ViewportSize
+    if not viewportSize or viewportSize.X <= 0 or viewportSize.Y <= 0 then return true end
+    local screenPos, onScreen = cam:WorldToViewportPoint(worldPos)
+    if not onScreen then return false end
+    local centerVec = getSilentAimFovScreenCenter()
+    local dist = (Vector2.new(screenPos.X, screenPos.Y) - centerVec).Magnitude
+    local clamped = math.clamp(SILENT_AIM_FOV_SIZE, FOV_MIN_DEG, FOV_MAX_DEG)
+    local sizePx = (clamped / 40) * 250
+    local radius = sizePx / 2
+    return dist <= radius
+end
+local function ensureAutoSaveFovGui()
+    if autoSaveFovGui and autoSaveFovGui.Parent then
+        return autoSaveFovGui, autoSaveFovCircle
+    end
+    local pg = LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui")
+    autoSaveFovGui = Instance.new("ScreenGui")
+    autoSaveFovGui.Name = "AutoSave_FovGui"
+    autoSaveFovGui.ResetOnSpawn = false
+    autoSaveFovGui.Parent = pg
+    local circle = Instance.new("Frame")
+    circle.Name = "Circle"
+    circle.AnchorPoint = Vector2.new(0.5, 0.5)
+    circle.Position = UDim2.new(0.5, 0, 0.5, 0)
+    circle.BackgroundTransparency = 1
+    circle.BorderSizePixel = 0
+    circle.Parent = autoSaveFovGui
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = circle
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 2
+    stroke.Color = Color3.fromRGB(0, 255, 100)
+    stroke.Transparency = 0.2
+    stroke.Parent = circle
+    autoSaveFovCircle = circle
+    return autoSaveFovGui, autoSaveFovCircle
+end
+local function getAutoSaveFovScreenCenter()
+    local cam = Workspace.CurrentCamera
+    if not cam then return Vector2.new(0, 0) end
+    local viewportSize = cam.ViewportSize
+    if AUTO_SAVE_MOBILE_FOV or UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
+        return Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+    end
+    local mousePos = UserInputService:GetMouseLocation()
+    local inset = GuiService:GetGuiInset()
+    return mousePos - Vector2.new(inset.X, inset.Y)
+end
+local function ensureAutoSaveFovUpdateLoop()
+    if autoSaveFovUpdateConn then return end
+    autoSaveFovUpdateConn = RunService.RenderStepped:Connect(function()
+        if not (AUTO_SAVE_USE_FOV and AUTO_SAVE_SHOW_FOV) then
+            if autoSaveFovGui then autoSaveFovGui.Enabled = false end
+            return
+        end
+        local gui, circle = ensureAutoSaveFovGui()
+        gui.Enabled = true
+        local cam = Workspace.CurrentCamera
+        if not cam then return end
+        local viewportSize = cam.ViewportSize
+        local clamped = math.clamp(AUTO_SAVE_FOV_SIZE, FOV_MIN_DEG, FOV_MAX_DEG)
+        local sizePx = (clamped / 40) * 250
+        circle.Size = UDim2.new(0, sizePx, 0, sizePx)
+        local center = getAutoSaveFovScreenCenter()
+        local xScale = center.X / viewportSize.X
+        local yScale = center.Y / viewportSize.Y
+        circle.Position = UDim2.new(xScale, 0, yScale, 0)
+    end)
+end
+local function updateAutoSaveFovCircle()
+    if not (AUTO_SAVE_USE_FOV and AUTO_SAVE_SHOW_FOV) then
+        if autoSaveFovGui then autoSaveFovGui.Enabled = false end
+        return
+    end
+    ensureAutoSaveFovUpdateLoop()
+end
+local function isWorldPosInAutoSaveFov(worldPos)
+    if not AUTO_SAVE_USE_FOV then return true end
+    local cam = Workspace.CurrentCamera
+    if not cam then return true end
+    local viewportSize = cam.ViewportSize
+    if not viewportSize or viewportSize.X <= 0 or viewportSize.Y <= 0 then return true end
+    local screenPos, onScreen = cam:WorldToViewportPoint(worldPos)
+    if not onScreen then return false end
+    local centerVec = getAutoSaveFovScreenCenter()
+    local dist = (Vector2.new(screenPos.X, screenPos.Y) - centerVec).Magnitude
+    local clamped = math.clamp(AUTO_SAVE_FOV_SIZE, FOV_MIN_DEG, FOV_MAX_DEG)
+    local sizePx = (clamped / 40) * 250
+    local radius = sizePx / 2
+    return dist <= radius
+end
+if GunTab then
+    GunModSection = GunTab:Section({ Title = "Gun Mod", Icon = "zap", Opened = false })
+    AutoShootSection = GunTab:Section({ Title = "Auto Shoot", Icon = "target", Opened = false })
+    local shootDropdown = AutoShootSection:Dropdown({
+        Title = "Select Zombie Types To AutoShoot",
+        Flag = "Shooting_Type_Select",
+        Desc = "Choose which zombie types to target.",
+        Values = ShootTypeList,
+        Value = {},
+        Multi = true,
+        Callback = function(selection)
+            local newSelection = selection or {}
+            SelectedShootTypes = {}
+            for _, v in ipairs(newSelection) do table.insert(SelectedShootTypes, tostring(v)) end
+            for _, t in ipairs(ShootTypeList) do
+                local found = false
+                for _, s in ipairs(SelectedShootTypes) do if s == t then found = true; break end end
+                if not found then EnabledShootTypes[t] = false end
+            end
+            if GunTab_InitComplete then
+                pcall(function()
+                    WindUI:Notify({
+                        Title = "Shooting Selection",
+                        Content = (#SelectedShootTypes > 0) and ("Selected: " .. table.concat(SelectedShootTypes, ", ")) or "No selection",
+                        Icon = "target",
+                        Duration = 1
+                    })
+                end)
+            end
+        end
+    })
+    local AutoShootToggle = AutoShootSection:Toggle({
+        Title = "Enable Auto Shoot",
+        Flag = "Shooting_Enable_Selected",
+        Desc = "Enable Auto Shooting for the selected zombie types.",
+        Icon = "play",
+        Value = USER_AUTO_SHOOT_TOGGLE,
+        Callback = function(state)
+            USER_AUTO_SHOOT_TOGGLE = state
+            if not state then
+                for t, _ in pairs(EnabledShootTypes) do EnabledShootTypes[t] = false end
+            else
+                for _, t in ipairs(SelectedShootTypes) do EnabledShootTypes[t] = true end
+            end
+        end
+    })
+    _G.KatchiToggleElements = _G.KatchiToggleElements or {}
+    _G.KatchiToggleElements.AutoShoot = AutoShootToggle
+    local InstantShootToggle = AutoShootSection:Toggle({
+        Title = "Instant Shoot",
+        Flag = "Shooting_Instant",
+        Desc = "Instantly shoot selected zombies (No Animations)",
+        Icon = "zap",
+        Value = INSTANT_SHOOT_ENABLED,
+        Callback = function(state)
+            INSTANT_SHOOT_ENABLED = state
+            APPEAR_DELAY = (INSTANT_SHOOT_ENABLED and 0.1) or APPEAR_DELAY_DEFAULT
+        end
+    })
+    _G.KatchiToggleElements.InstantShoot = InstantShootToggle
+    AutoShootSection:Slider({
+        Title = "Auto Shoot Delay",
+        Flag = "Shooting_AutoShootDelay",
+        Desc = "Total time from aiming to firing (seconds). Set higher for smoother rotation.",
+        Step = 0.1,
+        Value = { Min = 0.5, Max = 5, Default = AUTO_SHOOT_DELAY },
+        Callback = function(val)
+            AUTO_SHOOT_DELAY = math.clamp(tonumber(val) or 0.5, 0.3, 10)
+        end
+    })
+    AutoShootSection:Slider({
+        Title = "Prediction",
+        Flag = "Shooting_Prediction",
+        Desc = "Lead time in seconds (0.20 is recommended)",
+        Step = 0.2,
+        Value = { Min = 0, Max = 1, Default = PREDICTION_DISTANCE },
+        Callback = function(val)
+            PREDICTION_DISTANCE = math.clamp(tonumber(val) or 0, 0, 50)
+        end
+    })
+    AutoShootSection:Slider({
+        Title = "Max Target Range",
+        Flag = "Shooting_MaxRange",
+        Desc = "Maximum detection range.",
+        Step = 1,
+        Value = { Min = 1, Max = 600, Default = MAX_TARGET_RANGE },
+        Callback = function(val) MAX_TARGET_RANGE = val end
+    })
+    local UseFovToggle = AutoShootSection:Toggle({
+        Title = "Use Fov",
+        Flag = "Shooting_UseFov",
+        Desc = "Only target zombies inside the FOV.",
+        Icon = "circle",
+        Value = USE_FOV,
+        Callback = function(state)
+            USE_FOV = state
+            updateFovCircle()
+        end
+    })
+    _G.KatchiToggleElements.UseFov = UseFovToggle
+    AutoShootSection:Toggle({
+        Title = "Mobile Fov",
+        Flag = "Shooting_MobileFov",
+        Desc = "Fov stays in the middle (can be used in pc too).",
+        Icon = "smartphone",
+        Value = MOBILE_FOV,
+        Callback = function(state)
+            MOBILE_FOV = state
+            updateFovCircle()
+        end
+    })
+    local ShowFovToggle = AutoShootSection:Toggle({
+        Title = "Show Fov",
+        Flag = "Shooting_ShowFov",
+        Desc = "Show the fov circle.",
+        Icon = "eye",
+        Value = SHOW_FOV,
+        Callback = function(state)
+            SHOW_FOV = state
+            updateFovCircle()
+        end
+    })
+    _G.KatchiToggleElements.ShowFov = ShowFovToggle
+    AutoShootSection:Slider({
+        Title = "Fov Size",
+        Flag = "Shooting_FovSize",
+        Desc = "change the FOV circle size.",
+        Step = 1,
+        Value = { Min = FOV_MIN_DEG, Max = FOV_MAX_DEG, Default = FOV_SIZE_DEG },
+        Callback = function(val)
+            FOV_SIZE_DEG = val
+            updateFovCircle()
+        end
+    })
+    local WallCheckToggle = AutoShootSection:Toggle({
+        Title = "Wall Check (Raycast)",
+        Flag = "Shooting_WallCheck",
+        Desc = "Selected zombies behind walls will be ignored.",
+        Icon = "shield-off",
+        Value = CHECK_WALLS,
+        Callback = function(state) CHECK_WALLS = state end
+    })
+    _G.KatchiToggleElements.WallCheck = WallCheckToggle
+    local AutoReloadToggle = GunModSection:Toggle({ Title = "Auto Reload", Flag = "GunMod_AutoReload", Desc = "Automatically reload.", Icon = "refresh-cw", Value = AUTO_RELOAD_ENABLED, Callback = function(state) AUTO_RELOAD_ENABLED = state end })
+    _G.KatchiToggleElements.AutoReload = AutoReloadToggle
+    SilentAimSection = GunTab:Section({ Title = "Silent Aim", Icon = "crosshair", Opened = false })
+    local SilentAimToggle = SilentAimSection:Toggle({
+        Title = "Enable Silent Aim",
+        Flag = "SilentAim_Master",
+        Desc = "Master toggle for Silent Aim. Must be enabled for any silent aim features to work.",
+        Icon = "power",
+        Value = SILENT_AIM_ENABLED,
+        Callback = function(state)
+            SILENT_AIM_ENABLED = state
+            WindUI:Notify({
+                Title = "Silent Aim",
+                Content = state and "Silent Aim Enabled - Your shots will be redirected to targets" or "Silent Aim Disabled",
+                Duration = 2,
+                Icon = state and "crosshair" or "x"
+            })
+        end
+    })
+    _G.KatchiToggleElements = _G.KatchiToggleElements or {}
+    _G.KatchiToggleElements.SilentAim = SilentAimToggle
+    _G.KatchiToggleElements.SilentAimAutoAim = SilentAimAutoAimToggle
+    SilentAimSection:Dropdown({
+        Title = "Select Zombie Types",
+        Flag = "SilentAim_Type_Select",
+        Desc = "Choose which zombie types Silent Aim will target.",
+        Values = SilentAimZombieTypes,
+        Value = {},
+        Multi = true,
+        Callback = function(selection)
+            local newSelection = selection or {}
+            SilentAimSelectedTypes = {}
+            for _, v in ipairs(newSelection) do table.insert(SilentAimSelectedTypes, tostring(v)) end
+            for _, t in ipairs(SilentAimZombieTypes) do
+                local found = false
+                for _, s in ipairs(SilentAimSelectedTypes) do if s == t then found = true; break end end
+                if not found then SilentAimEnabledTypes[t] = false else SilentAimEnabledTypes[t] = true end
+            end
+            if GunTab_InitComplete then
+                pcall(function()
+                    WindUI:Notify({
+                        Title = "Silent Aim Selection",
+                        Content = (#SilentAimSelectedTypes > 0) and ("Selected: " .. table.concat(SilentAimSelectedTypes, ", ")) or "No selection",
+                        Icon = "crosshair",
+                        Duration = 1
+                    })
+                end)
+            end
+        end
+    })
+    SilentAimSection:Toggle({
+        Title = "Use Fov",
+        Flag = "SilentAim_UseFov",
+        Desc = "Only target zombies inside the FOV for Silent Aim.",
+        Icon = "circle",
+        Value = SILENT_AIM_USE_FOV,
+        Callback = function(state)
+            SILENT_AIM_USE_FOV = state
+            updateSilentAimFovCircle()
+        end
+    })
+    SilentAimSection:Toggle({
+        Title = "Mobile Fov",
+        Flag = "SilentAim_MobileFov",
+        Desc = "Fov stays in the middle (can be used in pc too).",
+        Icon = "smartphone",
+        Value = SILENT_AIM_MOBILE_FOV,
+        Callback = function(state)
+            SILENT_AIM_MOBILE_FOV = state
+            updateSilentAimFovCircle()
+        end
+    })
+    SilentAimSection:Toggle({
+        Title = "Show Fov",
+        Flag = "SilentAim_ShowFov",
+        Desc = "Show the Silent Aim FOV circle (cyan).",
+        Icon = "eye",
+        Value = SILENT_AIM_SHOW_FOV,
+        Callback = function(state)
+            SILENT_AIM_SHOW_FOV = state
+            updateSilentAimFovCircle()
+        end
+    })
+    SilentAimSection:Slider({
+        Title = "Fov Size",
+        Flag = "SilentAim_FovSize",
+        Desc = "Change the Silent Aim FOV circle size.",
+        Step = 1,
+        Value = { Min = FOV_MIN_DEG, Max = FOV_MAX_DEG, Default = SILENT_AIM_FOV_SIZE },
+        Callback = function(val)
+            SILENT_AIM_FOV_SIZE = val
+            updateSilentAimFovCircle()
+        end
+    })
+    SilentAimSection:Toggle({
+        Title = "Silent Aim Save Players",
+        Flag = "SilentAim_SavePlayers",
+        Desc = "Redirect shots to zombies grabbing players (higher priority than zombie targeting).",
+        Icon = "shield",
+        Value = SILENT_AIM_SAVE_PLAYERS_ENABLED,
+        Callback = function(state)
+            SILENT_AIM_SAVE_PLAYERS_ENABLED = state
+            WindUI:Notify({
+                Title = "Silent Aim Save Players",
+                Content = state and "Shots will redirect to zombies grabbing players" or "Disabled",
+                Duration = 2,
+                Icon = state and "shield" or "x"
+            })
+        end
+    })
+    local function getSilentAimSavePlayersNames()
+        local names = {"All"}
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                table.insert(names, player.Name)
+            end
+        end
+        return names
+    end
+    SilentAimSection:Dropdown({
+        Title = "Save Players Whitelist",
+        Flag = "SilentAim_SavePlayers_Whitelist",
+        Desc = "Only redirect shots to save these players",
+        Values = getSilentAimSavePlayersNames(),
+        Value = {"All"},
+        Multi = true,
+        Callback = function(selection)
+            local filtered = {}
+            local hasAll = false
+            for _, name in ipairs(selection or {}) do
+                if name == "All" then
+                    hasAll = true
+                else
+                    table.insert(filtered, name)
+                end
+            end
+            if hasAll then
+                SilentAimSavePlayersWhitelist = {}
+            else
+                SilentAimSavePlayersWhitelist = filtered
+            end
+            if GunTab_InitComplete then
+                pcall(function()
+                    WindUI:Notify({
+                        Title = "Silent Aim Save Whitelist",
+                        Content = (#SilentAimSavePlayersWhitelist > 0) and ("Will only save: " .. table.concat(SilentAimSavePlayersWhitelist, ", ")) or "Will save all players",
+                        Icon = "users",
+                        Duration = 2
+                    })
+                end)
+            end
+        end
+    })
+    SilentAimSection:Toggle({
+        Title = "Silent Aim Bomber Near Teammates",
+        Flag = "SilentAim_BomberNear",
+        Desc = "Only redirect shots to bombers when they are near teammates.",
+        Icon = "users",
+        Value = SILENT_AIM_BOMBER_NEAR_ENABLED,
+        Callback = function(state)
+            SILENT_AIM_BOMBER_NEAR_ENABLED = state
+            WindUI:Notify({
+                Title = "Silent Aim Bomber",
+                Content = state and "Will only target bombers near teammates" or "Normal bomber targeting",
+                Duration = 2,
+                Icon = state and "crosshair" or "x"
+            })
+        end
+    })
+    local function getSilentAimBomberNearNames()
+        local names = {"All"}
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                table.insert(names, player.Name)
+            end
+        end
+        return names
+    end
+    SilentAimSection:Dropdown({
+        Title = "Bomber Near Whitelist",
+        Flag = "SilentAim_BomberNear_Whitelist",
+        Desc = "Only shoot bombers near these teammates",
+        Values = getSilentAimBomberNearNames(),
+        Value = {"All"},
+        Multi = true,
+        Callback = function(selection)
+            local filtered = {}
+            local hasAll = false
+            for _, name in ipairs(selection or {}) do
+                if name == "All" then
+                    hasAll = true
+                else
+                    table.insert(filtered, name)
+                end
+            end
+            if hasAll then
+                SilentAimBomberNearWhitelist = {}
+            else
+                SilentAimBomberNearWhitelist = filtered
+            end
+            if GunTab_InitComplete then
+                pcall(function()
+                    WindUI:Notify({
+                        Title = "Silent Aim Bomber Near",
+                        Content = (#SilentAimBomberNearWhitelist > 0) and ("Will shoot bombers near: " .. table.concat(SilentAimBomberNearWhitelist, ", ")) or "Will shoot near any teammate",
+                        Icon = "crosshair",
+                        Duration = 2
+                    })
+                end)
+            end
+        end
+    })
+    SavePlayersSection = GunTab:Section({ Title = "Auto Save Players", Icon = "shield", Opened = false })
+    local AutoSavePlayersToggle = SavePlayersSection:Toggle({
+        Title = "Auto Save Players",
+        Flag = "SavePlayers_AutoSavePlayers",
+        Desc = "Shoot Zombies Grabbing The player.",
+        Icon = "shield",
+        Value = AUTO_SAVE_PLAYERS_ENABLED,
+        Callback = function(state) AUTO_SAVE_PLAYERS_ENABLED = state end
+    })
+    _G.KatchiToggleElements.AutoSavePlayers = AutoSavePlayersToggle
+    SavePlayersSection:Toggle({
+        Title = "Instant Save Players",
+        Flag = "SavePlayers_InstantSavePlayers",
+        Desc = "Instantly shoot the zombie grabbing the player (No Animations)",
+        Icon = "zap",
+        Value = INSTANT_SAVE_PLAYERS_ENABLED,
+        Callback = function(state) INSTANT_SAVE_PLAYERS_ENABLED = state end
+    })
+    SavePlayersSection:Slider({
+        Title = "Save Player Delay",
+        Flag = "SavePlayers_Delay",
+        Desc = "Delay before shooting when saving player (seconds)",
+        Step = 0.1,
+        Value = { Min = 0, Max = 5, Default = SAVE_PLAYER_DELAY },
+        Callback = function(val) SAVE_PLAYER_DELAY = val end
+    })
+    SavePlayersSection:Slider({
+        Title = "Max Save Players Range",
+        Flag = "SavePlayers_MaxRange",
+        Desc = "Max save players distance.",
+        Step = 1,
+        Value = { Min = 50, Max = 600, Default = MAX_SAVE_PLAYERS_RANGE },
+        Callback = function(val) MAX_SAVE_PLAYERS_RANGE = val end
+    })
+    SavePlayersSection:Toggle({
+        Title = "Use Fov",
+        Flag = "SavePlayers_UseFov",
+        Desc = "Only save players if zombie is inside the FOV.",
+        Icon = "circle",
+        Value = AUTO_SAVE_USE_FOV,
+        Callback = function(state)
+            AUTO_SAVE_USE_FOV = state
+            updateAutoSaveFovCircle()
+        end
+    })
+    SavePlayersSection:Toggle({
+        Title = "Mobile Fov",
+        Flag = "SavePlayers_MobileFov",
+        Desc = "Fov stays in the middle (can be used in pc too).",
+        Icon = "smartphone",
+        Value = AUTO_SAVE_MOBILE_FOV,
+        Callback = function(state)
+            AUTO_SAVE_MOBILE_FOV = state
+            updateAutoSaveFovCircle()
+        end
+    })
+    SavePlayersSection:Toggle({
+        Title = "Show Fov",
+        Flag = "SavePlayers_ShowFov",
+        Desc = "Show the Auto Save FOV circle (green).",
+        Icon = "eye",
+        Value = AUTO_SAVE_SHOW_FOV,
+        Callback = function(state)
+            AUTO_SAVE_SHOW_FOV = state
+            updateAutoSaveFovCircle()
+        end
+    })
+    SavePlayersSection:Slider({
+        Title = "Fov Size",
+        Flag = "SavePlayers_FovSize",
+        Desc = "Change the Auto Save FOV circle size.",
+        Step = 1,
+        Value = { Min = FOV_MIN_DEG, Max = FOV_MAX_DEG, Default = AUTO_SAVE_FOV_SIZE },
+        Callback = function(val)
+            AUTO_SAVE_FOV_SIZE = val
+            updateAutoSaveFovCircle()
+        end
+    })
+    local function getAutoSavePlayerNames()
+        local names = {"All"}
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                table.insert(names, player.Name)
+            end
+        end
+        return names
+    end
+    SavePlayersSection:Dropdown({
+        Title = "Auto Save Whitelist",
+        Flag = "SavePlayers_Whitelist",
+        Desc = "Only save these players",
+        Values = getAutoSavePlayerNames(),
+        Value = {"All"},
+        Multi = true,
+        Callback = function(selection)
+            local filtered = {}
+            local hasAll = false
+            for _, name in ipairs(selection or {}) do
+                if name == "All" then
+                    hasAll = true
+                else
+                    table.insert(filtered, name)
+                end
+            end
+            if hasAll then
+                AutoSaveWhitelist = {}
+            else
+                AutoSaveWhitelist = filtered
+            end
+            if GunTab_InitComplete then
+                pcall(function()
+                    WindUI:Notify({
+                        Title = "Auto Save Whitelist",
+                        Content = (#AutoSaveWhitelist > 0) and ("Will only save: " .. table.concat(AutoSaveWhitelist, ", ")) or "Will save all players",
+                        Icon = "users",
+                        Duration = 2
+                    })
+                end)
+            end
+        end
+    })
+    SafetyTrollingSection = GunTab:Section({ Title = "Safety & Trolling", Icon = "shield-alert", Opened = false })
+    local DontShootBomberNearTeammatesToggle = SafetyTrollingSection:Toggle({
+        Title = "Don't Shoot Bomber Near Teammates",
+        Flag = "Safety_BomberSafeTeammates",
+        Desc = "Won't shoot bombers within the safety radius of teammates.",
+        Icon = "shield",
+        Value = BOMBER_SAFE_TEAMMATES,
+        Callback = function(state)
+            BOMBER_SAFE_TEAMMATES = state
+            if state then
+                if SHOOT_BOMBER_NEAR_TEAMMATES then
+                    SHOOT_BOMBER_NEAR_TEAMMATES = false
+                    if ShootBomberNearTeammatesToggle then
+                        pcall(function() ShootBomberNearTeammatesToggle:SetValue(false) end)
+                    end
+                end
+                if ShootBomberNearTeammatesToggle then
+                    lockToggleWithNotify(ShootBomberNearTeammatesToggle, "Safety Conflict", "Cannot use 'Shoot Bomber Near Teammates' while 'Don't Shoot' is enabled.")
+                end
+            else
+                if ShootBomberNearTeammatesToggle then
+                    unlockToggle(ShootBomberNearTeammatesToggle)
+                end
+            end
+            WindUI:Notify({
+                Title = "Bomber Safety",
+                Content = state and "Won't shoot bombers near teammates" or "Disabled",
+                Duration = 2,
+                Icon = state and "shield" or "x"
+            })
+        end
+    })
+    DontShootNearWhitelistDropdown = SafetyTrollingSection:Dropdown({
+        Title = "Don't Shoot Near Teammates Whitelist",
+        Flag = "Safety_DontShootNear_Whitelist",
+        Desc = "Won't shoot bombers if these specific players are within blast radius",
+        Values = (function()
+            local names = {"None"}
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer then
+                    table.insert(names, player.Name)
+                end
+            end
+            return names
+        end)(),
+        Value = {},
+        Multi = true,
+        Callback = function(selection)
+            local filtered = {}
+            local hasNone = false
+            for _, name in ipairs(selection or {}) do
+                if name == "None" then
+                    hasNone = true
+                else
+                    table.insert(filtered, name)
+                end
+            end
+            if hasNone then
+                filtered = {}
+            end
+            BomberSafetyWhitelist = filtered
+            if GunTab_InitComplete then
+                refreshWhitelistDropdowns()
+                pcall(function()
+                    WindUI:Notify({
+                        Title = "Don't Shoot Near Whitelist",
+                        Content = (#BomberSafetyWhitelist > 0) and ("Protecting: " .. table.concat(BomberSafetyWhitelist, ", ")) or "No players whitelisted",
+                        Icon = "shield",
+                        Duration = 2
+                    })
+                end)
+            end
+        end
+    })
+    ShootBomberNearTeammatesToggle = SafetyTrollingSection:Toggle({
+        Title = "Shoot Bomber Near Teammates",
+        Flag = "Safety_ShootBomberNearTeammates",
+        Desc = "ONLY shoot bombers when teammates are within the safety radius (trolling feature).",
+        Icon = "crosshair",
+        Value = SHOOT_BOMBER_NEAR_TEAMMATES,
+        Callback = function(state)
+            SHOOT_BOMBER_NEAR_TEAMMATES = state
+            WindUI:Notify({
+                Title = "Bomber Targeting",
+                Content = state and "Will ONLY shoot bombers near teammates" or "Normal bomber targeting",
+                Duration = 2,
+                Icon = state and "crosshair" or "target"
+            })
+        end
+    })
+    if BOMBER_SAFE_TEAMMATES and ShootBomberNearTeammatesToggle then
+        task.defer(function()
+            lockToggleWithNotify(ShootBomberNearTeammatesToggle, "Safety Conflict", "Cannot use while 'Don't Shoot Bomber Near Teammates' is enabled.")
+        end)
+    end
+    ShootBomberNearWhitelistDropdown = SafetyTrollingSection:Dropdown({
+        Title = "Shoot Bomber Near Teammates Whitelist",
+        Flag = "Safety_ShootBomberNear_Whitelist",
+        Desc = "ONLY shoot bombers when these specific players are within blast radius",
+        Values = (function()
+            local names = {"None"}
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer then
+                    table.insert(names, player.Name)
+                end
+            end
+            return names
+        end)(),
+        Value = {},
+        Multi = true,
+        Callback = function(selection)
+            local filtered = {}
+            local hasNone = false
+            for _, name in ipairs(selection or {}) do
+                if name == "None" then
+                    hasNone = true
+                else
+                    table.insert(filtered, name)
+                end
+            end
+            if hasNone then
+                filtered = {}
+            end
+            ShootBomberNearWhitelist = filtered
+            if GunTab_InitComplete then
+                refreshWhitelistDropdowns()
+                pcall(function()
+                    WindUI:Notify({
+                        Title = "Shoot Near Whitelist",
+                        Content = (#ShootBomberNearWhitelist > 0) and ("Will shoot bombers near: " .. table.concat(ShootBomberNearWhitelist, ", ")) or "Will shoot near any teammate",
+                        Icon = "crosshair",
+                        Duration = 2
+                    })
+                end)
+            end
+        end
+    })
+    SafetyTrollingSection:Toggle({
+        Title = "Don't Shoot Bomber Near Me",
+        Flag = "Safety_BomberSafeSelf",
+        Desc = "Won't shoot bombers within the safety radius of yourself.",
+        Icon = "user",
+        Value = BOMBER_SAFE_SELF,
+        Callback = function(state)
+            BOMBER_SAFE_SELF = state
+            WindUI:Notify({
+                Title = "Bomber Safety",
+                Content = state and "Won't shoot bombers near you" or "Disabled",
+                Duration = 2,
+                Icon = state and "shield" or "x"
+            })
+        end
+    })
+    SafetyTrollingSection:Slider({
+        Title = "Bomber Safety Radius",
+        Flag = "Safety_BomberSafeRadius",
+        Desc = "The radius (in studs) for all bomber safety/trolling features.",
+        Step = 1,
+        Value = { Min = 5, Max = 30, Default = BOMBER_SAFE_RADIUS },
+        Callback = function(val)
+            BOMBER_SAFE_RADIUS = val
+            for model, visual in pairs(BomberRadiusVisuals) do
+                if visual and visual.Parent then
+                    visual.Size = Vector3.new(0.2, BOMBER_SAFE_RADIUS * 2, BOMBER_SAFE_RADIUS * 2)
+                end
+            end
+        end
+    })
+    TargetsSection = GunTab:Section({ Title = "Target Settings", Icon = "eye", Opened = false })
+    TargetsSection:Toggle({
+        Title = "Visualize Bomber Explosion Radius",
+        Flag = "Targets_BomberVisualize",
+        Desc = "Shows a circle around bombers showing the explosion radius.",
+        Icon = "circle",
+        Value = BOMBER_VISUALIZE_RADIUS,
+        Callback = function(state)
+            BOMBER_VISUALIZE_RADIUS = state
+            if not state then
+                for model, visual in pairs(BomberRadiusVisuals) do
+                    pcall(function() visual:Destroy() end)
+                end
+                BomberRadiusVisuals = {}
+            end
+            WindUI:Notify({
+                Title = "Bomber Visualization",
+                Content = state and "Showing explosion radius" or "Hidden",
+                Duration = 2,
+                Icon = state and "eye" or "eye-off"
+            })
+        end
+    })
+    TargetsSection:Toggle({
+        Title = "Target ESP",
+        Flag = "Targets_TargetEsp",
+        Desc = "Shows the zombie its currently targeting.",
+        Icon = "eye",
+        Value = TARGET_ESP_ENABLED,
+        Callback = function(state)
+            TARGET_ESP_ENABLED = state
+            if not state then
+                pcall(function() clearActiveTargetVisuals() end)
+            else
+                if activeAimModel then
+                    pcall(function() createTargetHighlight(activeAimModel) end)
+                end
+            end
+        end
+    })
+    TargetsSection:Toggle({
+        Title = "Show Aim Position",
+        Flag = "Targets_AimDot",
+        Desc = "Shows a red dot at the aim position.",
+        Icon = "target",
+        Value = AIM_DOT_ENABLED,
+        Callback = function(state)
+            AIM_DOT_ENABLED = state
+            if state then
+                pcall(function() createAimDot() end)
+                WindUI:Notify({
+                    Title = "Aim Dot",
+                    Content = "Aim position dot enabled",
+                    Duration = 2,
+                    Icon = "target"
+                })
+            else
+                pcall(function() clearAimDot() end)
+                WindUI:Notify({
+                    Title = "Aim Dot", 
+                    Content = "Aim position dot disabled",
+                    Duration = 2,
+                    Icon = "x"
+                })
+            end
+        end
+    })
+end
+local HAND_MORTAR_TIMING_ENABLED = false
+local HAND_MORTAR_DURATION = 5
+local HAND_MORTAR_ANIM_IDS = {
+    ["rbxassetid://117522716162453"] = true,
+    ["rbxassetid://83761082384320"] = true,
+}
+local handMortarGui = nil
+local handMortarUpdateConn = nil
+local handMortarCameraConn = nil
+local handMortarEndTick = nil
+local handMortarRunning = false
+local handMortarAnimConn = nil
+local function getPlayerGui()
+    return LocalPlayer:WaitForChild("PlayerGui")
+end
+local function isFirstPerson()
+    local cam = Workspace.CurrentCamera
+    if not cam then return false end
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local head = char:FindFirstChild("Head")
+    if not head or not head:IsA("BasePart") then return false end
+    local dist = (cam.CFrame.Position - head.Position).Magnitude
+    return dist < 0.7
+end
+local function createHandMortarGui()
+    if handMortarGui and ((handMortarGui.billboard and handMortarGui.billboard.Parent) or (handMortarGui.screen and handMortarGui.screen.Parent)) then
+        return handMortarGui
+    end
+    local playerGui = getPlayerGui()
+    local bg = Instance.new("BillboardGui")
+    bg.Name = "HandMortarTimingGui_Billboard"
+    bg.Size = UDim2.new(0, 90, 0, 60)
+    bg.StudsOffset = Vector3.new(2.2, 0, 0)
+    bg.AlwaysOnTop = true
+    bg.MaxDistance = 200
+    bg.Parent = playerGui
+    local frame = Instance.new("Frame")
+    frame.Name = "BG"
+    frame.Size = UDim2.new(1, 0, 1, 0)
+    frame.BackgroundTransparency = 1
+    frame.BorderSizePixel = 0
+    frame.Parent = bg
+    local plate = Instance.new("Frame")
+    plate.Name = "Plate"
+    plate.Size = UDim2.new(0, 70, 0, 46)
+    plate.Position = UDim2.new(0, 0, 0, 6)
+    plate.BackgroundTransparency = 0.5
+    plate.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+    plate.BorderSizePixel = 0
+    plate.Parent = frame
+    local barBg = Instance.new("Frame")
+    barBg.Name = "BarBg"
+    barBg.Size = UDim2.new(0, 10, 0, 36)
+    barBg.Position = UDim2.new(0, 6, 0, 5)
+    barBg.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    barBg.BorderSizePixel = 0
+    barBg.Parent = plate
+    barBg.AnchorPoint = Vector2.new(0, 0)
+    local fill = Instance.new("Frame")
+    fill.Name = "Fill"
+    fill.Size = UDim2.new(1, 0, 1, 0)
+    fill.Position = UDim2.new(0, 0, 0, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(180, 80, 0)
+    fill.BorderSizePixel = 0
+    fill.Parent = barBg
+    fill.AnchorPoint = Vector2.new(0, 1)
+    fill.Position = UDim2.new(0, 0, 1, 0)
+    local lbl = Instance.new("TextLabel")
+    lbl.Name = "Timer"
+    lbl.Size = UDim2.new(0, 44, 0, 18)
+    lbl.Position = UDim2.new(0, 22, 0, 8)
+    lbl.BackgroundTransparency = 1
+    lbl.TextScaled = false
+    lbl.Font = Enum.Font.SourceSansBold
+    lbl.TextSize = 16
+    lbl.Text = ""
+    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    lbl.Parent = plate
+    local title = Instance.new("TextLabel")
+    title.Name = "Title"
+    title.Size = UDim2.new(0, 44, 0, 14)
+    title.Position = UDim2.new(0, 22, 0, 27)
+    title.BackgroundTransparency = 1
+    title.TextScaled = false
+    title.Font = Enum.Font.SourceSans
+    title.TextSize = 12
+    title.Text = "Hand Mortar"
+    title.TextColor3 = Color3.fromRGB(200, 200, 200)
+    title.Parent = plate
+    local screen = Instance.new("ScreenGui")
+    screen.Name = "HandMortarTimingGui_Screen"
+    screen.ResetOnSpawn = false
+    screen.Parent = playerGui
+    local sFrame = Instance.new("Frame")
+    sFrame.Name = "Plate"
+    sFrame.Size = UDim2.new(0, 120, 0, 60)
+    sFrame.Position = UDim2.new(0.55, 0, 0.45, 0)
+    sFrame.AnchorPoint = Vector2.new(0, 0)
+    sFrame.BackgroundTransparency = 0.25
+    sFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+    sFrame.BorderSizePixel = 0
+    sFrame.Parent = screen
+    local sBarBg = Instance.new("Frame")
+    sBarBg.Name = "BarBg"
+    sBarBg.Size = UDim2.new(0, 10, 0, 36)
+    sBarBg.Position = UDim2.new(0, 6, 0, 12)
+    sBarBg.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    sBarBg.BorderSizePixel = 0
+    sBarBg.Parent = sFrame
+    local sFill = Instance.new("Frame")
+    sFill.Name = "Fill"
+    sFill.Size = UDim2.new(1, 0, 1, 0)
+    sFill.Position = UDim2.new(0, 0, 0, 0)
+    sFill.BackgroundColor3 = Color3.fromRGB(180, 80, 0)
+    sFill.BorderSizePixel = 0
+    sFill.Parent = sBarBg
+    sFill.AnchorPoint = Vector2.new(0, 1)
+    sFill.Position = UDim2.new(0, 0, 1, 0)
+    local sTimer = Instance.new("TextLabel")
+    sTimer.Name = "Timer"
+    sTimer.Size = UDim2.new(0, 80, 0, 24)
+    sTimer.Position = UDim2.new(0, 22, 0, 12)
+    sTimer.BackgroundTransparency = 1
+    sTimer.TextScaled = false
+    sTimer.Font = Enum.Font.SourceSansBold
+    sTimer.TextSize = 18
+    sTimer.Text = ""
+    sTimer.TextColor3 = Color3.fromRGB(255, 255, 255)
+    sTimer.Parent = sFrame
+    local sTitle = Instance.new("TextLabel")
+    sTitle.Name = "Title"
+    sTitle.Size = UDim2.new(0, 80, 0, 16)
+    sTitle.Position = UDim2.new(0, 22, 0, 38)
+    sTitle.BackgroundTransparency = 1
+    sTitle.TextScaled = false
+    sTitle.Font = Enum.Font.SourceSans
+    sTitle.TextSize = 12
+    sTitle.Text = "Hand Mortar"
+    sTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
+    sTitle.Parent = sFrame
+    handMortarGui = {
+        billboard = bg,
+        screen = screen,
+    }
+    bg.Enabled = false
+    screen.Enabled = false
+    return handMortarGui
+end
+local function destroyHandMortarGui()
+    if handMortarUpdateConn then
+        pcall(function() handMortarUpdateConn:Disconnect() end)
+        handMortarUpdateConn = nil
+    end
+    if handMortarCameraConn then
+        pcall(function() handMortarCameraConn:Disconnect() end)
+        handMortarCameraConn = nil
+    end
+    if handMortarGui then
+        if handMortarGui.billboard and handMortarGui.billboard.Parent then
+            pcall(function() handMortarGui.billboard:Destroy() end)
+        end
+        if handMortarGui.screen and handMortarGui.screen.Parent then
+            pcall(function() handMortarGui.screen:Destroy() end)
+        end
+        handMortarGui = nil
+    end
+    handMortarRunning = false
+    handMortarEndTick = nil
+end
+local function startHandMortarTimer(duration)
+    if not HAND_MORTAR_TIMING_ENABLED then return end
+    if not duration or type(duration) ~= "number" then duration = HAND_MORTAR_DURATION end
+    local gui = createHandMortarGui()
+    local char = LocalPlayer.Character
+    if char then
+        local head = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+        if head and head:IsA("BasePart") and gui.billboard then
+            gui.billboard.Adornee = head
+        end
+    end
+    handMortarEndTick = tick() + duration
+    handMortarRunning = true
+    local function updateVisibility()
+        local fp = isFirstPerson()
+        if gui.billboard then gui.billboard.Enabled = not fp end
+        if gui.screen then gui.screen.Enabled = fp end
+    end
+    updateVisibility()
+    if handMortarCameraConn then
+    else
+        handMortarCameraConn = RunService.RenderStepped:Connect(function()
+            if not handMortarRunning then return end
+            if handMortarGui then
+                local fp = isFirstPerson()
+                if handMortarGui.billboard then handMortarGui.billboard.Enabled = not fp end
+                if handMortarGui.screen then handMortarGui.screen.Enabled = fp end
+            end
+        end)
+    end
+    if handMortarUpdateConn then
+        return
+    end
+    handMortarUpdateConn = RunService.RenderStepped:Connect(function()
+        if not handMortarRunning or not handMortarGui then
+            destroyHandMortarGui()
+            return
+        end
+        local remaining = math.max(0, handMortarEndTick - tick())
+        local ratio = remaining / duration
+        ratio = math.clamp(ratio, 0, 1)
+        pcall(function()
+            if handMortarGui.billboard and handMortarGui.billboard.Parent then
+                local plate = handMortarGui.billboard:FindFirstChild("BG") and handMortarGui.billboard.BG:FindFirstChild("Plate")
+                if plate then
+                    local barBg = plate:FindFirstChild("BarBg")
+                    if barBg then
+                        local fillFrame = barBg:FindFirstChild("Fill")
+                        if fillFrame then
+                            fillFrame.Size = UDim2.new(1, 0, ratio, 0)
+                        end
+                    end
+                    local timerLabel = plate:FindFirstChild("Timer")
+                    if timerLabel then
+                        local ms = math.floor(remaining * 1000 + 0.5)
+                        local sec = math.floor(ms / 1000)
+                        local remMs = ms - sec * 1000
+                        timerLabel.Text = string.format("%d.%03ds", sec, remMs)
+                    end
+                end
+            end
+            if handMortarGui.screen and handMortarGui.screen.Parent then
+                local sFrame = handMortarGui.screen:FindFirstChild("Plate")
+                if sFrame then
+                    local sBarBg = sFrame:FindFirstChild("BarBg")
+                    if sBarBg then
+                        local sFill = sBarBg:FindFirstChild("Fill")
+                        if sFill then
+                            sFill.Size = UDim2.new(1, 0, ratio, 0)
+                        end
+                    end
+                    local sTimer = sFrame:FindFirstChild("Timer")
+                    if sTimer then
+                        local ms = math.floor(remaining * 1000 + 0.5)
+                        local sec = math.floor(ms / 1000)
+                        local remMs = ms - sec * 1000
+                        sTimer.Text = string.format("%d.%03ds", sec, remMs)
+                    end
+                end
+            end
+        end)
+        if remaining <= 0 then
+            destroyHandMortarGui()
+        end
+    end)
+end
+local function attachHandMortarWatcher()
+    if handMortarAnimConn then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    local function onAnimPlayed(track)
+        local anim = track and track.Animation
+        if not anim then return end
+        local id = string.lower(tostring(anim.AnimationId or ""))
+        if HAND_MORTAR_ANIM_IDS[id] then
+            task.delay(1, function()
+                if not HAND_MORTAR_TIMING_ENABLED then return end
+                if not LocalPlayer.Character then return end
+                startHandMortarTimer(HAND_MORTAR_DURATION)
+            end)
+        end
+    end
+    local ok, conn = pcall(function()
+        return hum.AnimationPlayed:Connect(onAnimPlayed)
+    end)
+    if ok and conn then
+        handMortarAnimConn = conn
+    end
+end
+LocalPlayer.CharacterAdded:Connect(function(newChar)
+    task.wait(0.1)
+    if handMortarAnimConn then
+        pcall(function() handMortarAnimConn:Disconnect() end)
+        handMortarAnimConn = nil
+    end
+    attachHandMortarWatcher()
+    destroyHandMortarGui()
+end)
+pcall(function()
+    attachHandMortarWatcher()
+end)
+if GunTab then
+    local MiscGunSection = GunTab:Section({ Title = "Misc", Icon = "settings", Opened = false })
+    MiscGunSection:Toggle({
+        Title = "Hand Mortar Timing",
+        Flag = "Misc_HandMortarTiming",
+        Desc = "Shows The Timer Of The Mortar Before Blowing Up.",
+        Icon = "clock",
+        Value = HAND_MORTAR_TIMING_ENABLED,
+        Callback = function(state)
+            HAND_MORTAR_TIMING_ENABLED = state
+            if not state then
+                destroyHandMortarGui()
+            end
+        end
+    })
+end
+print("Skibidi")
+GunTab_InitComplete = true
+end
