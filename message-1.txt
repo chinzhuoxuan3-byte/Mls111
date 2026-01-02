@@ -1,4 +1,3 @@
-do
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -3479,4 +3478,5 @@ if GunTab then
 end
 print("Skibidi")
 GunTab_InitComplete = true
+
 end
