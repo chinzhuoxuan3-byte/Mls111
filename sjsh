@@ -1,0 +1,106 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LP = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- --- 配置 ---
+_G.GhostFly = false
+local FlySpeed = 1.8 -- 飞行速度
+
+-- --- 创建 UI ---
+local ScreenGui = Instance.new("ScreenGui", game:GetService("CoreGui"))
+local MainBtn = Instance.new("TextButton", ScreenGui)
+MainBtn.Size = UDim2.new(0, 80, 0, 80)
+MainBtn.Position = UDim2.new(0.1, 0, 0.4, 0)
+MainBtn.Text = "幽灵飞行:关"
+MainBtn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+MainBtn.TextColor3 = Color3.new(1,1,1)
+MainBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", MainBtn).CornerRadius = UDim.new(1, 0)
+
+-- 增加发光边框表示状态
+local UIStroke = Instance.new("UIStroke")
+UIStroke.Thickness = 3
+UIStroke.Color = Color3.fromRGB(255, 0, 0)
+UIStroke.Parent = MainBtn
+
+-- 手机拖动逻辑
+local dragging = false
+MainBtn.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.Touch then dragging = true end end)
+MainBtn.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.Touch then dragging = false end end)
+UserInputService.InputChanged:Connect(function(i)
+    if dragging and i.UserInputType == Enum.UserInputType.Touch then
+        MainBtn.Position = UDim2.new(0, i.Position.X - 40, 0, i.Position.Y - 40)
+    end
+end)
+
+-- --- 创建最强锚定 Bypass 对象 ---
+local FakeSeat = Instance.new("Seat")
+FakeSeat.Transparency = 1
+FakeSeat.CanCollide = false
+FakeSeat.Anchored = true
+FakeSeat.Name = "GhostBypassProxy"
+
+-- --- 功能开关 ---
+MainBtn.MouseButton1Click:Connect(function()
+    _G.GhostFly = not _G.GhostFly
+    local char = LP.Character
+    if _G.GhostFly then
+        MainBtn.Text = "自由飞:开"
+        UIStroke.Color = Color3.fromRGB(0, 255, 0)
+        MainBtn.BackgroundColor3 = Color3.fromRGB(0, 40, 0)
+        FakeSeat.Parent = workspace
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            FakeSeat.CFrame = char.HumanoidRootPart.CFrame
+        end
+    else
+        MainBtn.Text = "幽灵飞行:关"
+        UIStroke.Color = Color3.fromRGB(255, 0, 0)
+        MainBtn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+        FakeSeat.Parent = nil
+        if char and char:FindFirstChildOfClass("Humanoid") then
+            char:FindFirstChildOfClass("Humanoid").Sit = false
+        end
+    end
+end)
+
+-- --- 核心控制：准星指哪飞哪 ---
+RunService.Stepped:Connect(function()
+    if _G.GhostFly and LP.Character then
+        local char = LP.Character
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        
+        if hrp and hum then
+            hum.Sit = true -- 核心：强制进入“坐下”Bypass状态
+            
+            -- 获取控制输入
+            local moveDir = hum.MoveDirection
+            
+            if moveDir.Magnitude > 0 then
+                -- 获取相机的 CFrame
+                local camCF = Camera.CFrame
+                
+                -- 计算新的移动向量
+                -- 我们将摇杆的 Z (前后) 映射到相机的 LookVector (视野前方)
+                -- 我们将摇杆的 X (左右) 映射到相机的 RightVector (相机侧方)
+                local direction = (camCF.LookVector * -moveDir.Z) + (camCF.RightVector * moveDir.X)
+                
+                -- 更新锚定座位的位置 (核心位移)
+                FakeSeat.CFrame = FakeSeat.CFrame + (direction * FlySpeed)
+            end
+            
+            -- 强制 HRP 跟随座位，反作弊的“物理拉回”在这种强制 CFrame 面前无效
+            hrp.CFrame = FakeSeat.CFrame
+            
+            -- 每一帧都关闭碰撞，双重保险
+            for _, v in pairs(char:GetDescendants()) do
+                if v:IsA("BasePart") then v.CanCollide = false end
+            end
+        end
+    end
+end)
+
+print("自由视角穿墙飞行已激活！")
+print("操作说明：抬头推摇杆即升空，低头推摇杆即入地。")
