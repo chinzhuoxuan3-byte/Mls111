@@ -1,4 +1,4 @@
-local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+                    local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
 local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
 local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
@@ -9,7 +9,7 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 local Window = Library:CreateWindow({
-	Title = "jentz hub | 终极整合不删减版", 
+	Title = "jentz hub", 
 	Footer = "Bro, 自动点击逻辑已原封不动加回",
 	Icon = 95816097006870,
 	NotifySide = "Right",
@@ -24,76 +24,61 @@ local Tabs = {
 local MainGroup = Tabs.Main:AddLeftGroupbox("稀有角色筛选")
 local InteractGroup = Tabs.Main:AddRightGroupbox("自动功能")
 
--- ==========================================
--- 1. 稀有名单与设置 (保留代码)
--- ==========================================
 local RareTargets = {"67", "La Vacca Saturnita", "Job Job Sahur", "Matteo", "Pot Hotspot", "Cavallo Virtuoso", "Esok Sekolah", "La Grande Combination", "Girafa Celestre", "Chillin Chilli", "Swag Soda", "Strawberelli Flamingelli", "Cocosini Mama", "Quivioli Ameleonni", "Orangutini Ananasini", "Chef Crabracadabra"}
-local MultiDropdown = MainGroup:AddDropdown("SelectedTargets", { Values = RareTargets, Default = 1, Multi = true, Text = "选择捕获目标" })
+local TypeTargets = {"Gold", "Diamond", "Regular"}
+
+local SelectedTargetsDropdown = MainGroup:AddDropdown("SelectedTargets", { Values = RareTargets, Default = 1, Multi = true, Text = "选择捕获目标" })
+local SelectedTypesDropdown = MainGroup:AddDropdown("SelectedTypes", { Values = TypeTargets, Default = 1, Multi = true, Text = "选择蛋种类" })
+
+MainGroup:AddButton("全选目标", function()
+    local all = {}
+    for _, v in pairs(RareTargets) do all[v] = true end
+    Library.Options.SelectedTargets:SetValue(all)
+end)
+
+MainGroup:AddButton("全选种类", function()
+    local all = {}
+    for _, v in pairs(TypeTargets) do all[v] = true end
+    Library.Options.SelectedTypes:SetValue(all)
+end)
 
 MainGroup:AddToggle("AutoRareFarm", { Text = "开启自动刷蛋/买蛋", Default = false })
+MainGroup:AddToggle("MythicOnly", { Text = "Mythic 品质强制买", Default = true })
+MainGroup:AddToggle("SecretOnly", { Text = "Secret 品质强制买", Default = true })
+MainGroup:AddToggle("ExoticOnly", { Text = "Exotic 品质强制买", Default = true })
 InteractGroup:AddToggle("AutoInteract", { Text = "开启手机端自动点击", Default = false })
 InteractGroup:AddToggle("AutoSell", { Text = "自动卖钱 (TP逻辑)", Default = false })
 
--- ==========================================
--- 2. 【核心】原封不动的自动点击逻辑 (你要求的原始逻辑)
--- ==========================================
 local CONFIG = {
-    clickInterval = 0.1, -- 快速点击间隔
+    clickInterval = 0.1,
     enableAutoClick = true,
-    buttonPatterns = {
-        "ProximityPrompt", "Interact", "Action", "Click", "Tap", "Press"
-    }
+    buttonPatterns = { "ProximityPrompt", "Interact", "Action", "Click", "Tap", "Press" }
 }
 
 local function isInteractionButton(guiObject)
-    if not (guiObject:IsA("GuiButton") or guiObject:IsA("TextButton") or guiObject:IsA("ImageButton")) then
-        return false
-    end
-    if not guiObject.Visible or guiObject.Transparency >= 0.9 then
-        return false
-    end
+    if not (guiObject:IsA("GuiButton") or guiObject:IsA("TextButton") or guiObject:IsA("ImageButton")) then return false end
+    if not guiObject.Visible or guiObject.Transparency >= 0.9 then return false end
     local fullName = guiObject:GetFullName():lower()
     for _, pattern in ipairs(CONFIG.buttonPatterns) do
-        if string.find(fullName, pattern:lower()) then
-            return true
-        end
+        if string.find(fullName, pattern:lower()) then return true end
     end
-    if guiObject:IsA("ImageButton") then
-        return true
-    end
+    if guiObject:IsA("ImageButton") then return true end
     local viewportSize = workspace.CurrentCamera.ViewportSize
     local screenCenter = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
     local buttonCenter = guiObject.AbsolutePosition + (guiObject.AbsoluteSize / 2)
-    local distance = (buttonCenter - screenCenter).Magnitude
-    if distance < 400 then
-        return true
-    end
-    return false
+    return (buttonCenter - screenCenter).Magnitude < 400
 end
 
 local function clickButton(button)
     if button and button.Parent then
         pcall(function()
-            for _, connection in ipairs(getconnections(button.MouseButton1Click)) do
-                connection:Fire()
-            end
-        end)
-        pcall(function()
-            for _, connection in ipairs(getconnections(button.Activated)) do
-                connection:Fire()
-            end
-        end)
-        pcall(function()
-            for _, connection in ipairs(getconnections(button.TouchTap)) do
-                connection:Fire()
-            end
+            for _, connection in ipairs(getconnections(button.MouseButton1Click)) do connection:Fire() end
+            for _, connection in ipairs(getconnections(button.Activated)) do connection:Fire() end
+            for _, connection in ipairs(getconnections(button.TouchTap)) do connection:Fire() end
         end)
     end
 end
 
--- ==========================================
--- 3. 原本的 TP 与 抽蛋逻辑 (禁止删除)
--- ==========================================
 local function GetNearestRigFrontCFrame()
     local Plots = workspace:FindFirstChild("CoreObjects") and workspace.CoreObjects:FindFirstChild("Plots")
     if not Plots then return nil end
@@ -116,18 +101,20 @@ local function GetNearestRigFrontCFrame()
     return closestTorso and closestTorso.CFrame * CFrame.new(0, 0, -5) or nil
 end
 
--- ==========================================
--- 4. 主循环线程 (不删减任何逻辑)
--- ==========================================
+local function CheckRarity(eggInstance, targetRarity)
+    for _, obj in pairs(eggInstance:GetDescendants()) do
+        if obj:IsA("TextLabel") and (obj.Name == "Rarity" or obj.Name == "TextLabel") then
+            if string.find(obj.Text, targetRarity) then return true end
+        end
+    end
+    return false
+end
 
--- 手机端点击主引擎 (直接整合你的 Heartbeat 逻辑)
 local lastClickTime = 0
 RunService.Heartbeat:Connect(function()
     if not Library.Toggles.AutoInteract or not Library.Toggles.AutoInteract.Value then return end
-    
     local currentTime = tick()
     if currentTime - lastClickTime >= CONFIG.clickInterval then
-        -- A. 优先 ProximityPrompt
         for _, obj in ipairs(workspace:GetDescendants()) do
             if obj:IsA("ProximityPrompt") and obj.Enabled then
                 if obj.Parent and obj.Parent:IsA("BasePart") then
@@ -140,13 +127,10 @@ RunService.Heartbeat:Connect(function()
                 end
             end
         end
-        
-        -- B. 处理 GUI 按钮
         local viewportSize = workspace.CurrentCamera.ViewportSize
         local screenCenter = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
         local closestButton = nil
         local closestDistance = math.huge
-        
         for _, gui in ipairs(playerGui:GetDescendants()) do
             if isInteractionButton(gui) then
                 local buttonCenter = gui.AbsolutePosition + (gui.AbsoluteSize / 2)
@@ -157,7 +141,6 @@ RunService.Heartbeat:Connect(function()
                 end
             end
         end
-        
         if closestButton then
             clickButton(closestButton)
             lastClickTime = currentTime
@@ -165,7 +148,6 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- 自动卖钱 TP 循环
 task.spawn(function()
     while true do
         if Library.Toggles.AutoSell and Library.Toggles.AutoSell.Value then
@@ -182,23 +164,45 @@ task.spawn(function()
     end
 end)
 
--- 自动抽蛋循环
 task.spawn(function()
     local lastBought = nil
     while true do
         if Library.Toggles.AutoRareFarm and Library.Toggles.AutoRareFarm.Value then
             pcall(function()
-                local eggs = workspace.CoreObjects.Eggs
-                local selected = Library.Options.SelectedTargets.Value
-                for _, egg in pairs(eggs:GetChildren()) do
-                    for name, isSelected in pairs(selected) do
-                        if isSelected and egg.Name:find(name) then
-                            if lastBought ~= egg then
-                                game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/BuyEgg"):InvokeServer(name, 1)
-                                lastBought = egg
+                local eggsFolder = workspace:FindFirstChild("CoreObjects") and workspace.CoreObjects:FindFirstChild("Eggs")
+                if not eggsFolder then return end
+                local selectedNames = Library.Options.SelectedTargets.Value
+                local selectedTypes = Library.Options.SelectedTypes.Value
+                for _, egg in pairs(eggsFolder:GetChildren()) do
+                    local eggName = egg.Name
+                    local shouldBuy = false
+                    if (Library.Toggles.MythicOnly.Value and CheckRarity(egg, "Mythic")) or (Library.Toggles.SecretOnly.Value and CheckRarity(egg, "Secret")) or (Library.Toggles.ExoticOnly.Value and CheckRarity(egg, "Exotic")) then
+                        shouldBuy = true
+                    end
+                    if not shouldBuy then
+                        local charMatched = false
+                        for name, isSelected in pairs(selectedNames) do
+                            if isSelected and string.find(eggName, name) then
+                                charMatched = true; break
                             end
-                            break
                         end
+                        if charMatched then
+                            for typeKey, isSelected in pairs(selectedTypes) do
+                                if isSelected then
+                                    if typeKey == "Regular" then
+                                        if not (string.find(eggName, "Gold") or string.find(eggName, "Diamond") or string.find(eggName, "Shiny")) then
+                                            shouldBuy = true; break
+                                        end
+                                    elseif string.find(eggName, typeKey) then
+                                        shouldBuy = true; break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    if shouldBuy and lastBought ~= egg then
+                        game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/BuyEgg"):InvokeServer(eggName, 1)
+                        lastBought = egg
                     end
                 end
                 game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/RequestEggSpawn"):InvokeServer()
@@ -208,4 +212,8 @@ task.spawn(function()
     end
 end)
 
-Library:Notify("所有原始代码已恢复并加固，Bro！")
+SaveManager:SetLibrary(Library)
+SaveManager:BuildConfigSection(Tabs["UI Settings"])
+ThemeManager:SetLibrary(Library)
+ThemeManager:ApplyToTab(Tabs["UI Settings"])
+Library:Notify("jentz hub 加载成功！已集成 Exotic 品质筛选")
