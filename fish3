@@ -1,4 +1,4 @@
-                    local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+              local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
 local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
 local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
@@ -9,7 +9,7 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 local Window = Library:CreateWindow({
-	Title = "jentz hub", 
+	Title = "jentz hub ", 
 	Footer = "Bro, 自动点击逻辑已原封不动加回",
 	Icon = 95816097006870,
 	NotifySide = "Right",
@@ -217,3 +217,4 @@ SaveManager:BuildConfigSection(Tabs["UI Settings"])
 ThemeManager:SetLibrary(Library)
 ThemeManager:ApplyToTab(Tabs["UI Settings"])
 Library:Notify("jentz hub 加载成功！已集成 Exotic 品质筛选")
+     
