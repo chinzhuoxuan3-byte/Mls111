@@ -5,7 +5,7 @@ local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
 local FILE_NAME = "JENTZ_6_STAGE_AUTH_EXPIRE.json"
-local SCRIPT_URL = "https://raw.githubusercontent.com/chinzhuoxuan3-byte/Mls111/refs/heads/main/Ezzloljentzo"
+local SCRIPT_URL = "https://raw.githubusercontent.com/chinzhuoxuan3-byte/Mls111/refs/heads/main/Ezzloljentzol"
 local EXPIRE_TIME = 86400 -- 24小时有效期
 
 local function CheckAuth()
