@@ -12,7 +12,7 @@ local playerGui = player:WaitForChild("PlayerGui")
 
 local Window = Library:CreateWindow({
 	Title = "jentz hub", 
-	Footer = "Bro, 已添加速度调节滑条",
+	Footer = "Bro, 防卡设置已生效 (UI锁)",
 	Icon = 95816097006870,
 	NotifySide = "Right",
 	ShowCustomCursor = true,
@@ -54,12 +54,11 @@ MainGroup:AddToggle("AdminOnly", { Text = "Admin 品质强制买", Default = tru
 
 InteractGroup:AddToggle("AutoInteract", { Text = "开启手机端自动点击", Default = false })
 InteractGroup:AddToggle("AutoSell", { Text = "自动卖钱 (TP逻辑)", Default = false })
-InteractGroup:AddToggle("AutoUpgrade50", { Text = "自动升级至50级 (Stand 1-50)", Default = false })
+InteractGroup:AddToggle("AutoUpgrade50", { Text = "自动升级至50级 (1-50)", Default = false })
 
--- 新增：速度调节滑条
 InteractGroup:AddSlider('UpgradeSpeed', {
-    Text = '升级间隔 (秒)',
-    Default = 0.05,
+    Text = '升级检测间隔 (秒)',
+    Default = 0.1,
     Min = 0.01,
     Max = 1.0,
     Rounding = 2,
@@ -251,7 +250,8 @@ end)
 task.spawn(function()
     local UpgradeRemote = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/UpgradeBrainrot")
     local PlotsFolder = Workspace:WaitForChild("CoreObjects"):WaitForChild("Plots")
-    local CompletedStands = {} 
+    local CompletedStands = {}
+    local IsUpgrading = {}
 
     local function GetMyPlot()
         for _, plot in pairs(PlotsFolder:GetChildren()) do
@@ -286,7 +286,7 @@ task.spawn(function()
                 if Stands then
                     for i = 1, 50 do
                         local name = "Stand" .. i
-                        if not CompletedStands[name] then
+                        if not CompletedStands[name] and not IsUpgrading[name] then
                             local stand = Stands:FindFirstChild(name)
                             if stand then
                                 task.spawn(function()
@@ -305,9 +305,24 @@ task.spawn(function()
                                                 if lvlNum >= 50 then
                                                     CompletedStands[name] = true
                                                 else
+                                                    IsUpgrading[name] = true
                                                     pcall(function()
                                                         UpgradeRemote:InvokeServer(name)
                                                     end)
+                                                    
+                                                    local sTime = tick()
+                                                    while tick() - sTime < 1.0 do
+                                                        local checkLbl = stand:FindFirstChild("UpgradeButton") and stand.UpgradeButton:FindFirstChild("UpgradeGUI") and stand.UpgradeButton.UpgradeGUI:FindFirstChild("Upgrade") and stand.UpgradeButton.UpgradeGUI.Upgrade:FindFirstChild("Level")
+                                                        if checkLbl then
+                                                            local checkNum = tonumber(string.match(checkLbl.Text, "%d+"))
+                                                            if checkNum and checkNum > lvlNum then
+                                                                break
+                                                            end
+                                                        end
+                                                        task.wait(0.1)
+                                                    end
+                                                    
+                                                    IsUpgrading[name] = false
                                                 end
                                             end
                                         end
@@ -320,8 +335,8 @@ task.spawn(function()
             end
         else
             table.clear(CompletedStands)
+            table.clear(IsUpgrading)
         end
-        -- 使用滑条控制速度
         task.wait(Library.Options.UpgradeSpeed.Value)
     end
 end)
@@ -330,4 +345,4 @@ SaveManager:SetLibrary(Library)
 SaveManager:BuildConfigSection(Tabs["UI Settings"])
 ThemeManager:SetLibrary(Library)
 ThemeManager:ApplyToTab(Tabs["UI Settings"])
-Library:Notify("速度控制已激活！")
+Library:Notify("防卡死模块已加载，升级逻辑已优化")
