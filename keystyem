@@ -1,0 +1,501 @@
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local LocalPlayer = Players.LocalPlayer
+
+local FILE_NAME = "卡密验证"
+local EXPIRE_TIME = 86400
+
+local Pool = {
+    {q="15世纪奥斯曼控制黑海的港口？", a="克里米亚赫尔松"},
+    {q="17世纪荷兰东印度公司货币？", a="银币"},
+    {q="1494年划分新世界条约？", a="托尔德西利亚斯"},
+    {q="丝绸之路蒙古时期安保措施？", a="驿站制度"},
+    {q="清朝与俄国外东北条约？", a="尼布楚条约"},
+    {q="拜占庭对意大利城邦经济影响？", a="贸易网络"},
+    {q="黑死病冲击佛罗伦萨哪业？", a="银行业"},
+    {q="马尔他骑士团16世纪职责？", a="海上防御"},
+    {q="18世纪法国殖民地税收冲突？", a="关税"},
+    {q="明治维新前日本与荷兰贸易商品？", a="药材"},
+    {q="金帐汗国东欧主要税收方式？", a="赋税"},
+    {q="萨法维王朝与奥斯曼战争经济动因？", a="丝绸贸易"},
+    {q="18世纪普鲁士“军事农业化”目的？", a="军费"},
+    {q="15世纪匈牙利防御奥斯曼方法？", a="要塞"},
+    {q="17世纪英荷贸易竞争策略？", a="垄断"},
+    {q="葡萄牙在西非沿海建据点目的？", a="黄金贸易"},
+    {q="巴尔干民族冲突触发奥匈策略？", a="联盟干预"},
+    {q="俄国对克里米亚干预方式？", a="军事"},
+    {q="蒙古西征对中东贸易影响？", a="中断"},
+    {q="17世纪法国美洲殖民冲突体现？", a="宗教"},
+    {q="法国大革命“革命日历”体现？", a="启蒙思想"},
+    {q="查理曼帝国重组教会与世俗权力方法？", a="行政改革"},
+    {q="哈布斯堡王朝16世纪低地国家政策？", a="分封"},
+    {q="三十年战争瑞典军队补给方法？", a="征粮"},
+    {q="维也纳会议后小国外交调整？", a="联盟"},
+    {q="16世纪意大利城邦银行竞争影响？", a="金融体系"},
+    {q="17世纪法国重商主义对殖民地作用？", a="垄断贸易"},
+    {q="光荣革命中议会权力上升基础？", a="税收"},
+    {q="18世纪荷兰与法国印度洋策略差异？", a="海上控制"},
+    {q="拿破仑改造小国法律影响？", a="法典"},
+    {q="神圣罗马帝国解体前德意志原因？", a="分裂"},
+    {q="文艺复兴佛罗伦萨银行家政治作用？", a="资助"},
+    {q="黑死病后英国农奴制转型原因？", a="劳动力短缺"},
+    {q="17世纪西班牙王室债务危机对殖民政策？", a="加税"},
+    {q="苏格兰16世纪坚固同盟意义？", a="军事"},
+    {q="波兰立陶宛联邦贵族抗中央方式？", a="封建权利"},
+    {q="罗马帝国晚期对日耳曼迁徙政策？", a="同化"},
+    {q="北欧王国与汉萨同盟贸易关系？", a="特权贸易"},
+    {q="16世纪神圣罗马帝国内部宗教冲突对城市权力？", a="自治"},
+    {q="18世纪瑞士联邦中立原因？", a="经济"},
+    {q="隋炀帝开凿大运河主要用途？", a="运粮"},
+    {q="镰仓幕府御家人制度作用？", a="地方武力"},
+    {q="明代海禁政策影响最大群体？", a="商人"},
+    {q="越南黎朝与明朝关系形式？", a="朝贡"},
+    {q="金帐汗国分裂后东欧贸易方式？", a="关税"},
+    {q="李氏王朝对外来宗教政策？", a="限制"},
+    {q="安史之乱对中原经济影响？", a="破坏"},
+    {q="宋代科举改革影响最大阶层？", a="士族"},
+    {q="清初理藩院管理对象？", a="西藏"},
+    {q="康熙年间《古今图书集成》性质？", a="类书"},
+    {q="高丽王朝与元朝宗藩关系形式？", a="附属"},
+    {q="元代行省制度作用？", a="地方管理"},
+    {q="唐宋边疆民族与中央贸易形式？", a="互市"},
+    {q="明代辽东防线作用？", a="防御"},
+    {q="宋元茶马互市影响区域？", a="西南"},
+    {q="唐代玄奘西行对中印作用？", a="文化"},
+    {q="平安时代贵族院政影响？", a="中央集权"},
+    {q="明代西南少数民族土司制度作用？", a="地方治理"},
+    {q="清代新疆回部治理策略？", a="军政合一"},
+    {q="辽金战争对东北亚贸易影响？", a="阻断"},
+    {q="东晋时期士族与寒门政治关系？", a="对立"},
+    {q="唐代节度使制度演变作用？", a="地方自治"},
+    {q="宋代官营手工业与民间关系？", a="互补"},
+    {q="清初理藩院实际管辖？", a="西藏"},
+    {q="康熙年间《古今图书集成》意图？", a="政治"},
+    {q="汉代盐铁专卖制度影响？", a="财政"},
+    {q="魏晋士族经济基础与权力关系？", a="土地"},
+    {q="宋代科举制度约束行为？", a="仕途"},
+    {q="明代万历年间内阁与地方矛盾？", a="财政"},
+    {q="清代乾隆边疆移民政策影响？", a="民族结构"},
+    {q="唐藩镇割据与中央互动？", a="制衡"},
+    {q="元末红巾军起义对江南影响？", a="破坏"},
+    {q="宋代东南沿海对外贸易政策效果？", a="税收"},
+    {q="洋务运动中地方官僚态度？", a="抵制"},
+    {q="明清科举题目导向思想？", a="儒学"},
+    {q="汉代匈奴与西域经济互动？", a="贸易"},
+    {q="唐代均田制对边疆政策影响？", a="稳定"},
+    {q="清代文字狱对学术作用？", a="限制"},
+    {q="魏晋士族文化影响社会流动？", a="门第"},
+    {q="宋代市舶司对外贸管理？", a="税收"},
+    {q="阿尔伯特大帝贡献领域？", a="自然哲学"},
+    {q="霍布斯政治理论影响？", a="主权"},
+    {q="伊本赫勒敦《历史绪论》主题？", a="兴衰"},
+    {q="康德永久和平思想关联实践？", a="国际法"},
+    {q="宋明理学对教育制度影响？", a="科举"},
+    {q="斯多葛学派对罗马伦理塑造？", a="官德"},
+    {q="马基雅维利贡献领域？", a="政治"},
+    {q="18世纪法国经济思想对殖民政策？", a="贸易"},
+    {q="柏拉图晚期《理想国》实践意义？", a="治国"},
+    {q="宋代朱熹理学与行政互动？", a="治理"},
+    {q="16世纪西班牙银流欧洲物价变化？", a="通货膨胀"},
+    {q="东印度公司16–17世纪策略？", a="垄断"},
+    {q="汉唐丝绸出口对中亚作用？", a="货币流通"},
+    {q="明清盐商政治作用？", a="地方"},
+    {q="19世纪英国工业革命对棉花殖民地影响？", a="产量增加"},
+    {q="18世纪荷兰资本流动影响？", a="贸易网络"},
+    {q="宋代城市经济塑造市场方式？", a="手工业"},
+    {q="明代东南沿海对外贸易政策对财政？", a="增加税收"},
+    {q="唐代茶马互市影响社会结构？", a="边疆"},
+    {q="17世纪英殖民地经济与本土工业互动？", a="原料供应"}
+}
+
+local function FakeKickEffect()
+    local OldGui = CoreGui:FindFirstChild("JentzAuth")
+    if OldGui then OldGui:Destroy() end
+
+    local KickGui = Instance.new("ScreenGui")
+    KickGui.Name = "RobloxPromptGui"
+    KickGui.Parent = CoreGui
+    KickGui.DisplayOrder = 9999
+    KickGui.IgnoreGuiInset = true
+
+    local Overlay = Instance.new("Frame")
+    Overlay.Name = "Overlay"
+    Overlay.Parent = KickGui
+    Overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    Overlay.BackgroundTransparency = 0.4
+    Overlay.Size = UDim2.new(1, 0, 1, 0)
+    Overlay.Active = true
+
+    local Box = Instance.new("Frame")
+    Box.Parent = Overlay
+    Box.BackgroundColor3 = Color3.fromRGB(57, 59, 61)
+    Box.BorderSizePixel = 0
+    Box.AnchorPoint = Vector2.new(0.5, 0.5)
+    Box.Position = UDim2.new(0.5, 0, 0.5, 0)
+    Box.Size = UDim2.new(0, 400, 0, 220)
+    
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, 8)
+    Corner.Parent = Box
+
+    local Title = Instance.new("TextLabel")
+    Title.Parent = Box
+    Title.BackgroundTransparency = 1
+    Title.Position = UDim2.new(0, 0, 0, 10)
+    Title.Size = UDim2.new(1, 0, 0, 30)
+    Title.Font = Enum.Font.GothamBold
+    Title.Text = "Disconnected"
+    Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Title.TextSize = 24
+
+    local Line = Instance.new("Frame")
+    Line.Parent = Box
+    Line.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+    Line.BorderSizePixel = 0
+    Line.Position = UDim2.new(0, 20, 0, 50)
+    Line.Size = UDim2.new(1, -40, 0, 1)
+    Line.BackgroundTransparency = 0.5
+
+    local Msg = Instance.new("TextLabel")
+    Msg.Parent = Box
+    Msg.BackgroundTransparency = 1
+    Msg.Position = UDim2.new(0, 20, 0, 60)
+    Msg.Size = UDim2.new(1, -40, 0, 80)
+    Msg.Font = Enum.Font.Gotham
+    Msg.Text = "你太菜了，多读几年书吧🤣\n(Error Code: 277)"
+    Msg.TextColor3 = Color3.fromRGB(220, 220, 220)
+    Msg.TextSize = 18
+    Msg.TextWrapped = true
+
+    local LeaveBtn = Instance.new("TextButton")
+    LeaveBtn.Parent = Box
+    LeaveBtn.BackgroundColor3 = Color3.fromRGB(57, 59, 61)
+    LeaveBtn.BorderSizePixel = 0
+    LeaveBtn.Position = UDim2.new(0.1, 0, 0.75, 0)
+    LeaveBtn.Size = UDim2.new(0.35, 0, 0, 40)
+    LeaveBtn.Font = Enum.Font.Gotham
+    LeaveBtn.Text = "Leave"
+    LeaveBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    LeaveBtn.TextSize = 16
+    
+    local LStroke = Instance.new("UIStroke")
+    LStroke.Parent = LeaveBtn
+    LStroke.Color = Color3.fromRGB(200, 200, 200)
+    LStroke.Thickness = 1
+    LStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    
+    local LCorner = Instance.new("UICorner")
+    LCorner.CornerRadius = UDim.new(0, 6)
+    LCorner.Parent = LeaveBtn
+
+    local ReconBtn = Instance.new("TextButton")
+    ReconBtn.Parent = Box
+    ReconBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    ReconBtn.Position = UDim2.new(0.55, 0, 0.75, 0)
+    ReconBtn.Size = UDim2.new(0.35, 0, 0, 40)
+    ReconBtn.Font = Enum.Font.Gotham
+    ReconBtn.Text = "Reconnect"
+    ReconBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+    ReconBtn.TextSize = 16
+    
+    local RCorner = Instance.new("UICorner")
+    RCorner.CornerRadius = UDim.new(0, 6)
+    RCorner.Parent = ReconBtn
+
+    LeaveBtn.MouseButton1Click:Connect(function() game:Shutdown() end)
+    ReconBtn.MouseButton1Click:Connect(function() game:Shutdown() end)
+end
+
+local function ShowSuccessAndLoad(targetGui)
+    local SuccessLabel = Instance.new("TextLabel")
+    SuccessLabel.Parent = targetGui
+    SuccessLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+    SuccessLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
+    SuccessLabel.Size = UDim2.new(0, 0, 0, 0)
+    SuccessLabel.BackgroundTransparency = 1
+    SuccessLabel.Text = "不过如此"
+    SuccessLabel.TextColor3 = Color3.fromRGB(0, 255, 255)
+    SuccessLabel.Font = Enum.Font.GothamBlack
+    SuccessLabel.ZIndex = 100
+    
+    local MainFrame = targetGui:FindFirstChild("Main")
+    if MainFrame then
+        TweenService:Create(MainFrame, TweenInfo.new(0.4), {Size = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 1}):Play()
+    end
+
+    local t1 = TweenService:Create(SuccessLabel, TweenInfo.new(0.8, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, 100), TextSize = 40})
+    t1:Play()
+    t1.Completed:Wait()
+    task.wait(0.5)
+    targetGui:Destroy()
+end
+
+local function CheckAuth()
+    if isfile and isfile(FILE_NAME) then
+        local success, content = pcall(readfile, FILE_NAME)
+        if success then
+            local data = HttpService:JSONDecode(content)
+            if data.User == LocalPlayer.Name and data.Pass == true then
+                local currentTime = os.time()
+                local authTime = data.Time or 0
+                if (currentTime - authTime) < EXPIRE_TIME then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+if CheckAuth() then return end
+
+local SelectedStages = {}
+local currentStage = 1
+local totalFailures = 0
+
+local function ShuffleAndSelect()
+    -- 1. 先把整个 Pool 洗乱
+    for i = #Pool, 2, -1 do
+        local j = math.random(i)
+        Pool[i], Pool[j] = Pool[j], Pool[i]
+    end
+    
+    -- 2. 清空当前关卡列表
+    SelectedStages = {}
+    
+    -- 3. 抽取前 25 题
+    for i = 1, 25 do
+        table.insert(SelectedStages, Pool[i])
+    end
+    
+    -- 4. 重置进度
+    currentStage = 1
+end
+
+ShuffleAndSelect()
+
+local Gui = Instance.new("ScreenGui")
+Gui.Name = "JentzAuth"
+Gui.Parent = CoreGui
+Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+Gui.DisplayOrder = 100
+
+local Main = Instance.new("Frame")
+Main.Name = "Main"
+Main.Parent = Gui
+Main.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+Main.BorderSizePixel = 0
+Main.AnchorPoint = Vector2.new(0.5, 0.5)
+Main.Position = UDim2.new(0.5, 0, 0.5, 0)
+Main.Size = UDim2.new(0, 0, 0, 0)
+Main.ClipsDescendants = true
+
+local Stroke = Instance.new("UIStroke")
+Stroke.Parent = Main
+Stroke.Color = Color3.fromRGB(0, 255, 255)
+Stroke.Thickness = 1.5
+Stroke.Transparency = 0
+
+local Corner = Instance.new("UICorner")
+Corner.CornerRadius = UDim.new(0, 6)
+Corner.Parent = Main
+
+local Title = Instance.new("TextLabel")
+Title.Parent = Main
+Title.BackgroundTransparency = 1
+Title.Position = UDim2.new(0, 15, 0, 10)
+Title.Size = UDim2.new(1, -30, 0, 20)
+Title.Font = Enum.Font.GothamBlack
+Title.Text = "冷酷验证系统 // 25关"
+Title.TextColor3 = Color3.fromRGB(0, 255, 255)
+Title.TextSize = 14
+Title.TextXAlignment = Enum.TextXAlignment.Left
+
+local ProfileFrame = Instance.new("Frame")
+ProfileFrame.Parent = Main
+ProfileFrame.BackgroundTransparency = 1
+ProfileFrame.Position = UDim2.new(0, 15, 0, 35)
+ProfileFrame.Size = UDim2.new(1, -30, 0, 50)
+
+local Avatar = Instance.new("ImageLabel")
+Avatar.Parent = ProfileFrame
+Avatar.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+Avatar.Size = UDim2.new(0, 40, 0, 40)
+Avatar.Image = "rbxthumb://type=AvatarHeadShot&id=" .. LocalPlayer.UserId .. "&w=150&h=150"
+local AC = Instance.new("UICorner") AC.CornerRadius = UDim.new(1,0) AC.Parent = Avatar
+
+local InfoLabel = Instance.new("TextLabel")
+InfoLabel.Parent = ProfileFrame
+InfoLabel.BackgroundTransparency = 1
+InfoLabel.Position = UDim2.new(0, 50, 0, 0)
+InfoLabel.Size = UDim2.new(1, -50, 1, 0)
+InfoLabel.Font = Enum.Font.Gotham
+InfoLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+InfoLabel.TextSize = 11
+InfoLabel.TextXAlignment = Enum.TextXAlignment.Left
+local execName = identifyexecutor and identifyexecutor() or "Unknown"
+InfoLabel.Text = "Name: " .. LocalPlayer.Name .. "\nAlias: " .. LocalPlayer.DisplayName .. "\nExec: " .. execName .. "\nAge: " .. LocalPlayer.AccountAge .. " days"
+
+local FailLabel = Instance.new("TextLabel")
+FailLabel.Parent = Main
+FailLabel.BackgroundTransparency = 1
+FailLabel.Position = UDim2.new(0, 15, 0, 10)
+FailLabel.Size = UDim2.new(1, -30, 0, 20)
+FailLabel.Font = Enum.Font.GothamBold
+FailLabel.Text = "失误: 0 / 25"
+FailLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+FailLabel.TextSize = 12
+FailLabel.TextXAlignment = Enum.TextXAlignment.Right
+
+local QuestionLabel = Instance.new("TextLabel")
+QuestionLabel.Parent = Main
+QuestionLabel.BackgroundTransparency = 1
+QuestionLabel.Position = UDim2.new(0, 15, 0, 90)
+QuestionLabel.Size = UDim2.new(1, -30, 0, 50)
+QuestionLabel.Font = Enum.Font.Gotham
+QuestionLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+QuestionLabel.TextSize = 13
+QuestionLabel.TextXAlignment = Enum.TextXAlignment.Left
+QuestionLabel.TextYAlignment = Enum.TextYAlignment.Top
+QuestionLabel.TextWrapped = true
+
+local InputBg = Instance.new("Frame")
+InputBg.Parent = Main
+InputBg.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
+InputBg.BorderSizePixel = 0
+InputBg.Position = UDim2.new(0, 15, 0, 150)
+InputBg.Size = UDim2.new(1, -30, 0, 35)
+
+local InputBgStroke = Instance.new("UIStroke")
+InputBgStroke.Parent = InputBg
+InputBgStroke.Color = Color3.fromRGB(60, 60, 70)
+InputBgStroke.Thickness = 1
+
+local InputBgCorner = Instance.new("UICorner")
+InputBgCorner.CornerRadius = UDim.new(0, 4)
+InputBgCorner.Parent = InputBg
+
+local InputBox = Instance.new("TextBox")
+InputBox.Parent = InputBg
+InputBox.BackgroundTransparency = 1
+InputBox.Position = UDim2.new(0, 10, 0, 0)
+InputBox.Size = UDim2.new(1, -20, 1, 0)
+InputBox.Font = Enum.Font.Gotham
+InputBox.PlaceholderText = "输入答案..."
+InputBox.Text = ""
+InputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+InputBox.TextSize = 13
+InputBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 100)
+
+local SubmitBtn = Instance.new("TextButton")
+SubmitBtn.Parent = Main
+SubmitBtn.BackgroundColor3 = Color3.fromRGB(0, 255, 255)
+SubmitBtn.BorderSizePixel = 0
+SubmitBtn.Position = UDim2.new(0, 15, 0, 195)
+SubmitBtn.Size = UDim2.new(1, -30, 0, 30)
+SubmitBtn.Font = Enum.Font.GothamBold
+SubmitBtn.Text = "提交"
+SubmitBtn.TextColor3 = Color3.fromRGB(10, 10, 15)
+SubmitBtn.TextSize = 13
+SubmitBtn.AutoButtonColor = false
+
+local BtnCorner = Instance.new("UICorner")
+BtnCorner.CornerRadius = UDim.new(0, 4)
+BtnCorner.Parent = SubmitBtn
+
+local ProgressBg = Instance.new("Frame")
+ProgressBg.Parent = Main
+ProgressBg.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+ProgressBg.BorderSizePixel = 0
+ProgressBg.Position = UDim2.new(0, 0, 1, -3)
+ProgressBg.Size = UDim2.new(1, 0, 0, 3)
+
+local ProgressLine = Instance.new("Frame")
+ProgressLine.Parent = ProgressBg
+ProgressLine.BackgroundColor3 = Color3.fromRGB(0, 255, 255)
+ProgressLine.BorderSizePixel = 0
+ProgressLine.Size = UDim2.new(0, 0, 1, 0)
+
+TweenService:Create(Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = UDim2.new(0, 340, 0, 250)}):Play()
+
+-- ---------------------------------------------------------
+-- 逻辑处理
+-- ---------------------------------------------------------
+local function UpdateUI()
+    if SelectedStages[currentStage] then
+        QuestionLabel.Text = "第 " .. currentStage .. " 关: " .. SelectedStages[currentStage].q
+    end
+    InputBox.Text = ""
+    InputBox.PlaceholderText = "..."
+    FailLabel.Text = "失误: " .. totalFailures .. " / 25"
+    TweenService:Create(ProgressLine, TweenInfo.new(0.3), {Size = UDim2.new((currentStage-1)/25, 0, 1, 0)}):Play()
+end
+
+local function ShakeEffect()
+    local pos = Main.Position
+    for i = 1, 5 do
+        Main.Position = UDim2.new(pos.X.Scale, pos.X.Offset + math.random(-6, 6), pos.Y.Scale, pos.Y.Offset + math.random(-6, 6))
+        task.wait(0.04)
+    end
+    Main.Position = pos
+end
+
+SubmitBtn.MouseButton1Click:Connect(function()
+    local input = InputBox.Text
+    local correct = SelectedStages[currentStage].a
+    
+    if string.find(string.lower(input), string.lower(correct)) then
+        local oldColor = Stroke.Color
+        TweenService:Create(Stroke, TweenInfo.new(0.1), {Color = Color3.fromRGB(0, 255, 100)}):Play()
+        task.wait(0.2)
+        TweenService:Create(Stroke, TweenInfo.new(0.2), {Color = oldColor}):Play()
+        
+        currentStage = currentStage + 1
+        
+        if currentStage > 25 then
+            local authData = {User = LocalPlayer.Name, Pass = true, Time = os.time()}
+            writefile(FILE_NAME, HttpService:JSONEncode(authData))
+            ShowSuccessAndLoad(Gui)
+        else
+            UpdateUI()
+        end
+    else
+        totalFailures = totalFailures + 1
+        
+        if totalFailures > 25 then
+            FakeKickEffect()
+        else
+            InputBox.Text = ""
+            InputBox.PlaceholderText = "错误! 题目已重置"
+            
+            local oldColor = Stroke.Color
+            TweenService:Create(Stroke, TweenInfo.new(0.1), {Color = Color3.fromRGB(255, 0, 0)}):Play()
+            ShakeEffect()
+            TweenService:Create(Stroke, TweenInfo.new(0.5), {Color = oldColor}):Play()
+            
+            -- 核心：重新从 100 题中随机抽 25 题
+            ShuffleAndSelect()
+            UpdateUI()
+        end
+    end
+end)
+
+UpdateUI()
+
+local dragging, dragInput, dragStart, startPos
+Main.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true dragStart = input.Position startPos = Main.Position
+    end
+end)
+game:GetService("UserInputService").InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+game:GetService("UserInputService").InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+end)
