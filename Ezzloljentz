@@ -17,7 +17,7 @@ local playerGui = player:WaitForChild("PlayerGui")
 
 -- 创建主功能窗口
 local Window = Library:CreateWindow({
-	Title = "jentz hub | 终极整合不删减版", 
+	Title = "jentz hub", 
 	Footer = "Bro, 自动点击逻辑已原封不动加回",
 	Icon = 95816097006870,
 	NotifySide = "Right",
