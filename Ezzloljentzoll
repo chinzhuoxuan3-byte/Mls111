@@ -5,12 +5,14 @@ local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 local Window = Library:CreateWindow({
 	Title = "jentz hub", 
-	Footer = "Bro, 自动点击逻辑已原封不动加回",
+	Footer = "Bro, 已添加速度调节滑条",
 	Icon = 95816097006870,
 	NotifySide = "Right",
 	ShowCustomCursor = true,
@@ -52,6 +54,17 @@ MainGroup:AddToggle("AdminOnly", { Text = "Admin 品质强制买", Default = tru
 
 InteractGroup:AddToggle("AutoInteract", { Text = "开启手机端自动点击", Default = false })
 InteractGroup:AddToggle("AutoSell", { Text = "自动卖钱 (TP逻辑)", Default = false })
+InteractGroup:AddToggle("AutoUpgrade50", { Text = "自动升级至50级 (Stand 1-50)", Default = false })
+
+-- 新增：速度调节滑条
+InteractGroup:AddSlider('UpgradeSpeed', {
+    Text = '升级间隔 (秒)',
+    Default = 0.05,
+    Min = 0.01,
+    Max = 1.0,
+    Rounding = 2,
+    Compact = false,
+})
 
 local CONFIG = {
     clickInterval = 0.1,
@@ -156,7 +169,7 @@ task.spawn(function()
     while true do
         if Library.Toggles.AutoSell and Library.Toggles.AutoSell.Value then
             pcall(function()
-                game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RE/PickupBoxes"):FireServer()
+                ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RE/PickupBoxes"):FireServer()
                 local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
                 local targetCF = GetNearestRigFrontCFrame()
                 if hrp and targetCF and (hrp.Position - targetCF.Position).Magnitude > 3 then
@@ -224,14 +237,92 @@ task.spawn(function()
                         end
                     end
                     if shouldBuy and lastBought ~= egg then
-                        game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/BuyEgg"):InvokeServer(eggName, 1)
+                        ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/BuyEgg"):InvokeServer(eggName, 1)
                         lastBought = egg
                     end
                 end
-                game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/RequestEggSpawn"):InvokeServer()
+                ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/RequestEggSpawn"):InvokeServer()
             end)
         end
         task.wait(0.4)
+    end
+end)
+
+task.spawn(function()
+    local UpgradeRemote = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/UpgradeBrainrot")
+    local PlotsFolder = Workspace:WaitForChild("CoreObjects"):WaitForChild("Plots")
+    local CompletedStands = {} 
+
+    local function GetMyPlot()
+        for _, plot in pairs(PlotsFolder:GetChildren()) do
+            local owner = plot:FindFirstChild("Owner")
+            if owner and owner.Value == player then return plot end
+        end
+        local char = player.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            local root = char.HumanoidRootPart
+            local closest = nil
+            local minDidst = 9999
+            for _, plot in pairs(PlotsFolder:GetChildren()) do
+                local ref = plot:FindFirstChild("Floor") or plot:FindFirstChild("Base") or plot:FindFirstChildWhichIsA("BasePart", true)
+                if ref then
+                    local dist = (root.Position - ref.Position).Magnitude
+                    if dist < minDidst then
+                        minDidst = dist
+                        closest = plot
+                    end
+                end
+            end
+            if closest and minDidst < 300 then return closest end
+        end
+        return nil
+    end
+
+    while true do
+        if Library.Toggles.AutoUpgrade50.Value then
+            local MyPlot = GetMyPlot()
+            if MyPlot then
+                local Stands = MyPlot:FindFirstChild("Stands")
+                if Stands then
+                    for i = 1, 50 do
+                        local name = "Stand" .. i
+                        if not CompletedStands[name] then
+                            local stand = Stands:FindFirstChild(name)
+                            if stand then
+                                task.spawn(function()
+                                    local btn = stand:FindFirstChild("UpgradeButton")
+                                    local gui = btn and btn:FindFirstChild("UpgradeGUI")
+                                    local upg = gui and gui:FindFirstChild("Upgrade")
+                                    local lvlLabel = upg and upg:FindFirstChild("Level")
+                                    
+                                    if lvlLabel then
+                                        local txt = lvlLabel.Text
+                                        if string.find(string.lower(txt), "max") then
+                                            CompletedStands[name] = true
+                                        else
+                                            local lvlNum = tonumber(string.match(txt, "%d+"))
+                                            if lvlNum then
+                                                if lvlNum >= 50 then
+                                                    CompletedStands[name] = true
+                                                else
+                                                    pcall(function()
+                                                        UpgradeRemote:InvokeServer(name)
+                                                    end)
+                                                end
+                                            end
+                                        end
+                                    end
+                                end)
+                            end
+                        end
+                    end
+                end
+            end
+        else
+            table.clear(CompletedStands)
+        end
+        -- 使用滑条控制速度
+        task.wait(Library.Options.UpgradeSpeed.Value)
     end
 end)
 
@@ -239,4 +330,4 @@ SaveManager:SetLibrary(Library)
 SaveManager:BuildConfigSection(Tabs["UI Settings"])
 ThemeManager:SetLibrary(Library)
 ThemeManager:ApplyToTab(Tabs["UI Settings"])
-Library:Notify("jentz hub 加载成功！所有功能已就绪")
+Library:Notify("速度控制已激活！")
