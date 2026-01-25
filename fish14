@@ -12,7 +12,7 @@ local playerGui = player:WaitForChild("PlayerGui")
 
 local Window = Library:CreateWindow({
 	Title = "jentz hub", 
-	Footer = "新增自动开蛋, 自动放置 (检测空位)",
+	Footer = "Bro, 已增加自定义名字筛选",
 	Icon = 95816097006870,
 	NotifySide = "Right",
 	ShowCustomCursor = true,
@@ -30,7 +30,8 @@ local RareTargets = {"67", "La Vacca Saturnita", "Job Job Sahur", "Matteo", "Pot
 local TypeTargets = {"All", "Gold", "Diamond", "Regular", "Snowy", "Tornado", "Magmatic", "Lightning", "Galaxy", "Stinky", "Disco", "Radioactive", "Sakura"}
 
 local SelectedTargetsDropdown = MainGroup:AddDropdown("SelectedTargets", { Values = RareTargets, Default = 1, Multi = true, Text = "选择捕获目标" })
-MainGroup:AddToggle("AutoPlace", { Text = "自动放置选择目标 (需要手里拿蛋)", Default = false }) 
+MainGroup:AddToggle("AutoPlace", { Text = "自动放置选择目标 (仅空位)", Default = false }) 
+MainGroup:AddInput('CustomTargetName', { Default = '', Numeric = false, Finished = false, Text = '名字选择目标', Tooltip = '输入想要捕获的目标名称', Placeholder = '输入名称...' })
 
 local SelectedTypesDropdown = MainGroup:AddDropdown("SelectedTypes", { Values = TypeTargets, Default = 1, Multi = true, Text = "选择蛋种类" })
 
@@ -197,7 +198,8 @@ task.spawn(function()
                 if not eggsFolder then return end
                 local selectedNames = Library.Options.SelectedTargets.Value
                 local selectedTypes = Library.Options.SelectedTypes.Value
-                
+                local customTargetName = Library.Options.CustomTargetName.Value 
+
                 for _, egg in pairs(eggsFolder:GetChildren()) do
                     local eggName = egg.Name
                     local shouldBuy = false
@@ -260,6 +262,13 @@ task.spawn(function()
                                 charMatched = true; break
                             end
                         end
+                        
+                        if not charMatched and customTargetName ~= "" then
+                             if string.find(eggName, customTargetName) then
+                                 charMatched = true
+                             end
+                        end
+
                         if charMatched and isTypeMatch then
                             shouldBuy = true
                         end
