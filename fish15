@@ -10,9 +10,65 @@ local Workspace = game:GetService("Workspace")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
+local Lang = {
+    cn = {
+        Footer = "作者: TrackMaker",
+        RareGroup = "稀有角色筛选",
+        AutoGroup = "自动功能",
+        SelectTarget = "选择捕获目标",
+        SelectType = "选择蛋种类",
+        SelectAllTarget = "全选目标",
+        SelectAllType = "全选种类",
+        EnableTypeCheck = "是否选择种类购买",
+        ForceBuy = "品质强制买/停",
+        AutoInteract = "开启手机端自动点击",
+        AutoSell = "自动卖钱 (TP逻辑)",
+        AutoUpgrade = "自动升级至50级 (1-50)",
+        UpgradeSpeed = "升级检测间隔 (秒)",
+        AutoHatch = "自动抽蛋 (Stand出目标停止)",
+        AutoPlace = "自动放置选择目标 (仅空位)",
+        AutoPickup = "自动拾取 (Stand 1-50)",
+        CustomName = "名字选择目标",
+        CustomTooltip = "输入想要捕获的目标名称",
+        AutoSpawn = "自动刷新蛋",
+        AutoBuy = "自动购买选中蛋",
+        LangSetting = "语言设置 / Settings",
+        SwitchBtn = "切换语言 (Switch Language)",
+        Author = "作者: TrackMaker"
+    },
+    en = {
+        Footer = "Bro, Auto Roll Upgraded (Rarity Stop) | Author: TrackMaker",
+        RareGroup = "Rare Character Filter",
+        AutoGroup = "Automation",
+        SelectTarget = "Select Targets",
+        SelectType = "Select Egg Types",
+        SelectAllTarget = "Select All Targets",
+        SelectAllType = "Select All Types",
+        EnableTypeCheck = "Enable Type Check",
+        ForceBuy = "Force Buy/Stop",
+        AutoInteract = "Auto Interact (Mobile)",
+        AutoSell = "Auto Sell (TP)",
+        AutoUpgrade = "Auto Upgrade to 50",
+        UpgradeSpeed = "Upgrade Speed (s)",
+        AutoHatch = "Auto Hatch (Stop on Target)",
+        AutoPlace = "Auto Place Selected (Empty Only)",
+        AutoPickup = "Auto Pickup (Stand 1-50)",
+        CustomName = "Custom Target Name",
+        CustomTooltip = "Enter name to catch",
+        AutoSpawn = "Auto Roll Shop",
+        AutoBuy = "Auto Buy Selected Eggs",
+        LangSetting = "Language Settings",
+        SwitchBtn = "Switch Language (CN/EN)",
+        Author = "Author: TrackMaker"
+    }
+}
+
+local CurrentLang = "cn"
+local UI = {}
+
 local Window = Library:CreateWindow({
 	Title = "jentz hub", 
-	Footer = "Bro, 已增加自定义名字筛选",
+	Footer = Lang[CurrentLang].Footer,
 	Icon = 95816097006870,
 	NotifySide = "Right",
 	ShowCustomCursor = true,
@@ -23,56 +79,97 @@ local Tabs = {
 	["UI Settings"] = Window:AddTab("UI Settings", "settings"),
 }
 
-local MainGroup = Tabs.Main:AddLeftGroupbox("稀有角色筛选")
-local InteractGroup = Tabs.Main:AddRightGroupbox("自动功能")
+UI.MainGroup = Tabs.Main:AddLeftGroupbox(Lang[CurrentLang].RareGroup)
+UI.InteractGroup = Tabs.Main:AddRightGroupbox(Lang[CurrentLang].AutoGroup)
 
 local RareTargets = {"67", "La Vacca Saturnita", "Job Job Sahur", "Matteo", "Pot Hotspot", "Cavallo Virtuoso", "Esok Sekolah", "La Grande Combination", "Girafa Celestre", "Chillin Chilli", "Swag Soda", "Strawberelli Flamingelli", "Cocosini Mama", "Quivioli Ameleonni", "Orangutini Ananasini", "Chef Crabracadabra"}
 local TypeTargets = {"All", "Gold", "Diamond", "Regular", "Snowy", "Tornado", "Magmatic", "Lightning", "Galaxy", "Stinky", "Disco", "Radioactive", "Sakura"}
 
-local SelectedTargetsDropdown = MainGroup:AddDropdown("SelectedTargets", { Values = RareTargets, Default = 1, Multi = true, Text = "选择捕获目标" })
-MainGroup:AddToggle("AutoPlace", { Text = "自动放置选择目标 (仅空位)", Default = false }) 
-MainGroup:AddInput('CustomTargetName', { Default = '', Numeric = false, Finished = false, Text = '名字选择目标', Tooltip = '输入想要捕获的目标名称', Placeholder = '输入名称...' })
+UI.SelectedTargets = UI.MainGroup:AddDropdown("SelectedTargets", { Values = RareTargets, Default = 1, Multi = true, Text = Lang[CurrentLang].SelectTarget })
+UI.AutoPlace = UI.MainGroup:AddToggle("AutoPlace", { Text = Lang[CurrentLang].AutoPlace, Default = false }) 
+UI.CustomTargetName = UI.MainGroup:AddInput('CustomTargetName', { Default = '', Numeric = false, Finished = false, Text = Lang[CurrentLang].CustomName, Tooltip = Lang[CurrentLang].CustomTooltip, Placeholder = '...' })
 
-local SelectedTypesDropdown = MainGroup:AddDropdown("SelectedTypes", { Values = TypeTargets, Default = 1, Multi = true, Text = "选择蛋种类" })
+UI.SelectedTypes = UI.MainGroup:AddDropdown("SelectedTypes", { Values = TypeTargets, Default = 1, Multi = true, Text = Lang[CurrentLang].SelectType })
 
-MainGroup:AddButton("全选目标", function()
+UI.BtnAllTarget = UI.MainGroup:AddButton(Lang[CurrentLang].SelectAllTarget, function()
     local all = {}
     for _, v in pairs(RareTargets) do all[v] = true end
     Library.Options.SelectedTargets:SetValue(all)
 end)
 
-MainGroup:AddButton("全选种类", function()
+UI.BtnAllType = UI.MainGroup:AddButton(Lang[CurrentLang].SelectAllType, function()
     local all = {}
     for _, v in pairs(TypeTargets) do all[v] = true end
     Library.Options.SelectedTypes:SetValue(all)
 end)
 
-MainGroup:AddToggle("AutoRareFarm", { Text = "开启自动刷蛋/买蛋", Default = false })
-MainGroup:AddDivider()
-MainGroup:AddToggle("EnableTypeCheck", { Text = "是否选择种类购买", Default = false }) 
-MainGroup:AddToggle("MythicOnly", { Text = "Mythic 品质强制买", Default = true })
-MainGroup:AddToggle("SecretOnly", { Text = "Secret 品质强制买", Default = true })
-MainGroup:AddToggle("ExoticOnly", { Text = "Exotic 品质强制买", Default = true })
-MainGroup:AddToggle("EventOnly", { Text = "Event 品质强制买", Default = true })
-MainGroup:AddToggle("ExclusiveOnly", { Text = "Exclusive 品质强制买", Default = true })
-MainGroup:AddToggle("AdminOnly", { Text = "Admin 品质强制买", Default = true })
-MainGroup:AddToggle("OGOnly", { Text = "OG 品质强制买", Default = true })
-MainGroup:AddToggle("DivineOnly", { Text = "Divine 品质强制买", Default = true })
-MainGroup:AddToggle("GODOnly", { Text = "GOD 品质强制买", Default = true })
+UI.AutoSpawn = UI.MainGroup:AddToggle("AutoSpawn", { Text = Lang[CurrentLang].AutoSpawn, Default = false })
+UI.AutoBuy = UI.MainGroup:AddToggle("AutoBuy", { Text = Lang[CurrentLang].AutoBuy, Default = false })
 
-InteractGroup:AddToggle("AutoInteract", { Text = "开启手机端自动点击", Default = false })
-InteractGroup:AddToggle("AutoSell", { Text = "自动卖钱 (TP逻辑)", Default = false })
-InteractGroup:AddToggle("AutoUpgrade50", { Text = "自动升级至50级 (1-50)", Default = false })
-InteractGroup:AddToggle("AutoHatch", { Text = "自动开蛋 (Stand 1-50)", Default = false })
+UI.MainGroup:AddDivider()
+UI.EnableTypeCheck = UI.MainGroup:AddToggle("EnableTypeCheck", { Text = Lang[CurrentLang].EnableTypeCheck, Default = false }) 
 
-InteractGroup:AddSlider('UpgradeSpeed', {
-    Text = '升级检测间隔 (秒)',
+local Rarities = {"Mythic", "Secret", "Exotic", "Event", "Exclusive", "Admin", "OG", "Divine", "GOD"}
+UI.RarityToggles = {}
+for _, r in ipairs(Rarities) do
+    UI.RarityToggles[r] = UI.MainGroup:AddToggle(r.."Only", { Text = r .. " " .. Lang[CurrentLang].ForceBuy, Default = true })
+end
+
+UI.AutoInteract = UI.InteractGroup:AddToggle("AutoInteract", { Text = Lang[CurrentLang].AutoInteract, Default = false })
+UI.AutoSell = UI.InteractGroup:AddToggle("AutoSell", { Text = Lang[CurrentLang].AutoSell, Default = false })
+UI.AutoUpgrade50 = UI.InteractGroup:AddToggle("AutoUpgrade50", { Text = Lang[CurrentLang].AutoUpgrade, Default = false })
+UI.AutoHatch = UI.InteractGroup:AddToggle("AutoHatch", { Text = Lang[CurrentLang].AutoHatch, Default = false })
+UI.AutoPickup = UI.InteractGroup:AddToggle("AutoPickup", { Text = Lang[CurrentLang].AutoPickup, Default = false })
+
+UI.UpgradeSpeed = UI.InteractGroup:AddSlider('UpgradeSpeed', {
+    Text = Lang[CurrentLang].UpgradeSpeed,
     Default = 0.1,
     Min = 0.01,
     Max = 1.0,
     Rounding = 2,
     Compact = false,
 })
+
+UI.SettingsGroup = Tabs.Main:AddRightGroupbox(Lang[CurrentLang].LangSetting)
+
+UI.SwitchBtn = UI.SettingsGroup:AddButton(Lang[CurrentLang].SwitchBtn, function()
+    CurrentLang = (CurrentLang == "cn") and "en" or "cn"
+    local L = Lang[CurrentLang]
+    
+    pcall(function() Window:SetFooter(L.Footer) end)
+    pcall(function() UI.MainGroup:SetText(L.RareGroup) end)
+    pcall(function() UI.InteractGroup:SetText(L.AutoGroup) end)
+    pcall(function() UI.SettingsGroup:SetText(L.LangSetting) end)
+    
+    pcall(function() UI.SelectedTargets:SetText(L.SelectTarget) end)
+    pcall(function() UI.AutoPlace:SetText(L.AutoPlace) end)
+    pcall(function() UI.CustomTargetName:SetText(L.CustomName) end)
+    pcall(function() UI.SelectedTypes:SetText(L.SelectType) end)
+    pcall(function() UI.BtnAllTarget:SetText(L.SelectAllTarget) end)
+    pcall(function() UI.BtnAllType:SetText(L.SelectAllType) end)
+    
+    pcall(function() UI.AutoSpawn:SetText(L.AutoSpawn) end)
+    pcall(function() UI.AutoBuy:SetText(L.AutoBuy) end)
+    pcall(function() UI.EnableTypeCheck:SetText(L.EnableTypeCheck) end)
+    
+    for r, toggle in pairs(UI.RarityToggles) do
+        local txt = (CurrentLang == "cn") and (r .. " " .. L.ForceBuy) or (L.ForceBuy .. " " .. r)
+        pcall(function() toggle:SetText(txt) end)
+    end
+    
+    pcall(function() UI.AutoInteract:SetText(L.AutoInteract) end)
+    pcall(function() UI.AutoSell:SetText(L.AutoSell) end)
+    pcall(function() UI.AutoUpgrade50:SetText(L.AutoUpgrade) end)
+    pcall(function() UI.AutoHatch:SetText(L.AutoHatch) end)
+    pcall(function() UI.AutoPickup:SetText(L.AutoPickup) end)
+    pcall(function() UI.UpgradeSpeed:SetText(L.UpgradeSpeed) end)
+    pcall(function() UI.SwitchBtn:SetText(L.SwitchBtn) end)
+    pcall(function() UI.AuthorLabel:SetText(L.Author) end)
+    
+    Library:Notify("Language switched / 语言已切换")
+end)
+
+UI.AuthorLabel = UI.SettingsGroup:AddLabel(Lang["cn"].Author)
 
 local CONFIG = {
     clickInterval = 0.1,
@@ -192,18 +289,45 @@ end)
 task.spawn(function()
     local lastBought = nil
     while true do
-        if Library.Toggles.AutoRareFarm and Library.Toggles.AutoRareFarm.Value then
-            pcall(function()
-                local eggsFolder = workspace:FindFirstChild("CoreObjects") and workspace.CoreObjects:FindFirstChild("Eggs")
-                if not eggsFolder then return end
-                local selectedNames = Library.Options.SelectedTargets.Value
-                local selectedTypes = Library.Options.SelectedTypes.Value
-                local customTargetName = Library.Options.CustomTargetName.Value 
+        local eggsFolder = workspace:FindFirstChild("CoreObjects") and workspace.CoreObjects:FindFirstChild("Eggs")
+        
+        if eggsFolder then
+            local selectedNames = Library.Options.SelectedTargets.Value
+            local selectedTypes = Library.Options.SelectedTypes.Value
+            local customTargetName = Library.Options.CustomTargetName.Value 
 
-                for _, egg in pairs(eggsFolder:GetChildren()) do
-                    local eggName = egg.Name
+            local shopHasTarget = false
+
+            for _, egg in pairs(eggsFolder:GetChildren()) do
+                local eggName = egg.Name
+                local isTarget = false
+                local isRarityStop = false
+                
+                for name, isSelected in pairs(selectedNames) do
+                    if isSelected and string.find(eggName, name) then isTarget = true; break end
+                end
+                if not isTarget and customTargetName ~= "" then
+                     if string.find(eggName, customTargetName) then isTarget = true end
+                end
+
+                if (Library.Toggles.MythicOnly.Value and CheckRarity(egg, "Mythic")) or 
+                   (Library.Toggles.SecretOnly.Value and CheckRarity(egg, "Secret")) or 
+                   (Library.Toggles.ExoticOnly.Value and CheckRarity(egg, "Exotic")) or
+                   (Library.Toggles.EventOnly.Value and CheckRarity(egg, "Event")) or
+                   (Library.Toggles.ExclusiveOnly.Value and CheckRarity(egg, "Exclusive")) or
+                   (Library.Toggles.AdminOnly.Value and CheckRarity(egg, "Admin")) or
+                   (Library.Toggles.OGOnly.Value and CheckRarity(egg, "OG")) or
+                   (Library.Toggles.DivineOnly.Value and CheckRarity(egg, "Divine")) or
+                   (Library.Toggles.GODOnly.Value and CheckRarity(egg, "GOD")) then
+                    isRarityStop = true
+                end
+
+                if isTarget or isRarityStop then
+                    shopHasTarget = true
+                end
+
+                if Library.Toggles.AutoBuy.Value then
                     local shouldBuy = false
-                    
                     local isTypeMatch = false
                     local anyTypeSelected = false
                     for _, isSelected in pairs(selectedTypes) do
@@ -211,9 +335,7 @@ task.spawn(function()
                     end
                     
                     if not anyTypeSelected then
-                        if not (string.find(eggName, "Gold") or string.find(eggName, "Diamond") or string.find(eggName, "Shiny")) then
-                            isTypeMatch = true
-                        end
+                        if not (string.find(eggName, "Gold") or string.find(eggName, "Diamond") or string.find(eggName, "Shiny")) then isTypeMatch = true end
                     else
                         if selectedTypes["All"] then
                             isTypeMatch = true
@@ -221,57 +343,23 @@ task.spawn(function()
                             for typeKey, isSelected in pairs(selectedTypes) do
                                 if isSelected then
                                     if typeKey == "Regular" then
-                                        if not (string.find(eggName, "Gold") or string.find(eggName, "Diamond") or string.find(eggName, "Shiny")) then
-                                            isTypeMatch = true; break
-                                        end
-                                    elseif string.find(eggName, typeKey) then
-                                        isTypeMatch = true; break
-                                    end
+                                        if not (string.find(eggName, "Gold") or string.find(eggName, "Diamond") or string.find(eggName, "Shiny")) then isTypeMatch = true; break end
+                                    elseif string.find(eggName, typeKey) then isTypeMatch = true; break end
                                 end
                             end
                         end
                     end
 
-                    local rarityMatched = false
-                    if (Library.Toggles.MythicOnly.Value and CheckRarity(egg, "Mythic")) or 
-                       (Library.Toggles.SecretOnly.Value and CheckRarity(egg, "Secret")) or 
-                       (Library.Toggles.ExoticOnly.Value and CheckRarity(egg, "Exotic")) or
-                       (Library.Toggles.EventOnly.Value and CheckRarity(egg, "Event")) or
-                       (Library.Toggles.ExclusiveOnly.Value and CheckRarity(egg, "Exclusive")) or
-                       (Library.Toggles.AdminOnly.Value and CheckRarity(egg, "Admin")) or
-                       (Library.Toggles.OGOnly.Value and CheckRarity(egg, "OG")) or
-                       (Library.Toggles.DivineOnly.Value and CheckRarity(egg, "Divine")) or
-                       (Library.Toggles.GODOnly.Value and CheckRarity(egg, "GOD")) then
-                        rarityMatched = true
-                    end
-
-                    if rarityMatched then
+                    if isRarityStop then
                         if Library.Toggles.EnableTypeCheck.Value then
-                            if isTypeMatch then
-                                shouldBuy = true
-                            end
+                            if isTypeMatch then shouldBuy = true end
                         else
                             shouldBuy = true
                         end
                     end
 
-                    if not shouldBuy then
-                        local charMatched = false
-                        for name, isSelected in pairs(selectedNames) do
-                            if isSelected and string.find(eggName, name) then
-                                charMatched = true; break
-                            end
-                        end
-                        
-                        if not charMatched and customTargetName ~= "" then
-                             if string.find(eggName, customTargetName) then
-                                 charMatched = true
-                             end
-                        end
-
-                        if charMatched and isTypeMatch then
-                            shouldBuy = true
-                        end
+                    if not shouldBuy and isTarget and isTypeMatch then
+                        shouldBuy = true
                     end
                     
                     if shouldBuy and lastBought ~= egg then
@@ -279,8 +367,13 @@ task.spawn(function()
                         lastBought = egg
                     end
                 end
-                ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/RequestEggSpawn"):InvokeServer()
-            end)
+            end
+
+            if Library.Toggles.AutoSpawn.Value and not shopHasTarget then
+                pcall(function()
+                     ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/RequestEggSpawn"):InvokeServer()
+                end)
+            end
         end
         task.wait(0.4)
     end
@@ -306,10 +399,7 @@ task.spawn(function()
                 local ref = plot:FindFirstChild("Floor") or plot:FindFirstChild("Base") or plot:FindFirstChildWhichIsA("BasePart", true)
                 if ref then
                     local dist = (root.Position - ref.Position).Magnitude
-                    if dist < minDidst then
-                        minDidst = dist
-                        closest = plot
-                    end
+                    if dist < minDidst then minDidst = dist; closest = plot end
                 end
             end
             if closest and minDidst < 300 then return closest end
@@ -345,22 +435,16 @@ task.spawn(function()
                                                     CompletedStands[name] = true
                                                 else
                                                     IsUpgrading[name] = true
-                                                    pcall(function()
-                                                        UpgradeRemote:InvokeServer(name)
-                                                    end)
-                                                    
+                                                    pcall(function() UpgradeRemote:InvokeServer(name) end)
                                                     local sTime = tick()
                                                     while tick() - sTime < 1.0 do
                                                         local checkLbl = stand:FindFirstChild("UpgradeButton") and stand.UpgradeButton:FindFirstChild("UpgradeGUI") and stand.UpgradeButton.UpgradeGUI:FindFirstChild("Upgrade") and stand.UpgradeButton.UpgradeGUI.Upgrade:FindFirstChild("Level")
                                                         if checkLbl then
                                                             local checkNum = tonumber(string.match(checkLbl.Text, "%d+"))
-                                                            if checkNum and checkNum > lvlNum then
-                                                                break
-                                                            end
+                                                            if checkNum and checkNum > lvlNum then break end
                                                         end
                                                         task.wait(0.1)
                                                     end
-                                                    
                                                     IsUpgrading[name] = false
                                                 end
                                             end
@@ -409,10 +493,7 @@ task.spawn(function()
                 local ref = plot:FindFirstChild("Floor") or plot:FindFirstChild("Base") or plot:FindFirstChildWhichIsA("BasePart", true)
                 if ref then
                     local dist = (root.Position - ref.Position).Magnitude
-                    if dist < minDidst then
-                        minDidst = dist
-                        closest = plot
-                    end
+                    if dist < minDidst then minDidst = dist; closest = plot end
                 end
             end
             if closest and minDidst < 300 then return closest end
@@ -426,16 +507,34 @@ task.spawn(function()
             if MyPlot then
                 local Stands = MyPlot:FindFirstChild("Stands")
                 if Stands then
+                    local selectedTargets = Library.Options.SelectedTargets.Value
+                    local customTargetName = Library.Options.CustomTargetName.Value 
+
                     for i = 1, 50 do
                         local standName = "Stand" .. i
                         local stand = Stands:FindFirstChild(standName)
                         
                         if stand then
-                            local eggName = GetEggNameFromStand(stand)
-                            if eggName then
-                                pcall(function()
-                                    HatchRemote:FireServer(standName, eggName)
-                                end)
+                            local currentModelName = GetEggNameFromStand(stand)
+                            if currentModelName then
+                                local isTarget = false
+                                for name, isSelected in pairs(selectedTargets) do
+                                    if isSelected and string.find(currentModelName, name) then
+                                        isTarget = true
+                                        break
+                                    end
+                                end
+                                if not isTarget and customTargetName ~= "" then
+                                    if string.find(currentModelName, customTargetName) then
+                                        isTarget = true
+                                    end
+                                end
+
+                                if not isTarget then
+                                    pcall(function()
+                                        HatchRemote:FireServer(standName, currentModelName)
+                                    end)
+                                end
                             end
                         end
                     end
@@ -464,10 +563,7 @@ task.spawn(function()
                 local ref = plot:FindFirstChild("Floor") or plot:FindFirstChild("Base") or plot:FindFirstChildWhichIsA("BasePart", true)
                 if ref then
                     local dist = (root.Position - ref.Position).Magnitude
-                    if dist < minDidst then
-                        minDidst = dist
-                        closest = plot
-                    end
+                    if dist < minDidst then minDidst = dist; closest = plot end
                 end
             end
             if closest and minDidst < 300 then return closest end
@@ -482,7 +578,8 @@ task.spawn(function()
                 local Stands = MyPlot:FindFirstChild("Stands")
                 if Stands then
                     local selectedTargets = Library.Options.SelectedTargets.Value
-                    
+                    local customTargetName = Library.Options.CustomTargetName.Value 
+
                     for i = 1, 50 do
                         local standName = "Stand" .. i
                         local stand = Stands:FindFirstChild(standName)
@@ -497,16 +594,81 @@ task.spawn(function()
                             end
 
                             if not occupied then
+                                local foundTarget = nil
                                 for name, isSelected in pairs(selectedTargets) do
-                                    if isSelected then
-                                        task.spawn(function()
-                                            pcall(function()
-                                                PlaceRemote:InvokeServer(standName, name)
-                                            end)
-                                        end)
-                                        break
-                                    end
+                                    if isSelected then foundTarget = name; break end
                                 end
+                                
+                                if not foundTarget and customTargetName ~= "" then
+                                    foundTarget = customTargetName 
+                                end
+
+                                if foundTarget then
+                                    task.spawn(function()
+                                        pcall(function()
+                                            PlaceRemote:InvokeServer(standName, foundTarget)
+                                        end)
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        task.wait(0.8)
+    end
+end)
+
+task.spawn(function()
+    local PickupRemote = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RE/PickupBrainrot")
+    local PlotsFolder = Workspace:WaitForChild("CoreObjects"):WaitForChild("Plots")
+
+    local function GetMyPlot()
+        for _, plot in pairs(PlotsFolder:GetChildren()) do
+            local owner = plot:FindFirstChild("Owner")
+            if owner and owner.Value == player then return plot end
+        end
+        local char = player.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            local root = char.HumanoidRootPart
+            local closest = nil
+            local minDidst = 9999
+            for _, plot in pairs(PlotsFolder:GetChildren()) do
+                local ref = plot:FindFirstChild("Floor") or plot:FindFirstChild("Base") or plot:FindFirstChildWhichIsA("BasePart", true)
+                if ref then
+                    local dist = (root.Position - ref.Position).Magnitude
+                    if dist < minDidst then minDidst = dist; closest = plot end
+                end
+            end
+            if closest and minDidst < 300 then return closest end
+        end
+        return nil
+    end
+
+    while true do
+        if Library.Toggles.AutoPickup and Library.Toggles.AutoPickup.Value then
+            local MyPlot = GetMyPlot()
+            if MyPlot then
+                local Stands = MyPlot:FindFirstChild("Stands")
+                if Stands then
+                    for i = 1, 50 do
+                        local standName = "Stand" .. i
+                        local stand = Stands:FindFirstChild(standName)
+                        if stand then
+                            local hasItem = false
+                             for _, child in pairs(stand:GetChildren()) do
+                                if child:IsA("Model") and child.Name ~= "UpgradeButton" and child.Name ~= "UpgradeGUI" and child.Name ~= "Base" and child.Name ~= "Part" then
+                                    hasItem = true
+                                    break
+                                end
+                            end
+                            
+                            if hasItem then
+                                pcall(function()
+                                    local args = { standName }
+                                    PickupRemote:FireServer(unpack(args))
+                                end)
                             end
                         end
                     end
@@ -521,4 +683,4 @@ SaveManager:SetLibrary(Library)
 SaveManager:BuildConfigSection(Tabs["UI Settings"])
 ThemeManager:SetLibrary(Library)
 ThemeManager:ApplyToTab(Tabs["UI Settings"])
-Library:Notify("所有功能加载完毕")
+Library:Notify("All Systems Operational")
