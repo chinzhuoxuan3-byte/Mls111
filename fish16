@@ -10,65 +10,11 @@ local Workspace = game:GetService("Workspace")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-local Lang = {
-    cn = {
-        Footer = "作者: TrackMaker",
-        RareGroup = "稀有角色筛选",
-        AutoGroup = "自动功能",
-        SelectTarget = "选择捕获目标",
-        SelectType = "选择蛋种类",
-        SelectAllTarget = "全选目标",
-        SelectAllType = "全选种类",
-        EnableTypeCheck = "是否选择种类购买",
-        ForceBuy = "品质强制买/停",
-        AutoInteract = "开启手机端自动点击",
-        AutoSell = "自动卖钱 (TP逻辑)",
-        AutoUpgrade = "自动升级至50级 (1-50)",
-        UpgradeSpeed = "升级检测间隔 (秒)",
-        AutoHatch = "自动抽蛋 (Stand出目标停止)",
-        AutoPlace = "自动放置选择目标 (仅空位)",
-        AutoPickup = "自动拾取 (Stand 1-50)",
-        CustomName = "名字选择目标",
-        CustomTooltip = "输入想要捕获的目标名称",
-        AutoSpawn = "自动刷新蛋",
-        AutoBuy = "自动购买选中蛋",
-        LangSetting = "语言设置 / Settings",
-        SwitchBtn = "切换语言 (Switch Language)",
-        Author = "作者: TrackMaker"
-    },
-    en = {
-        Footer = "Bro, Auto Roll Upgraded (Rarity Stop) | Author: TrackMaker",
-        RareGroup = "Rare Character Filter",
-        AutoGroup = "Automation",
-        SelectTarget = "Select Targets",
-        SelectType = "Select Egg Types",
-        SelectAllTarget = "Select All Targets",
-        SelectAllType = "Select All Types",
-        EnableTypeCheck = "Enable Type Check",
-        ForceBuy = "Force Buy/Stop",
-        AutoInteract = "Auto Interact (Mobile)",
-        AutoSell = "Auto Sell (TP)",
-        AutoUpgrade = "Auto Upgrade to 50",
-        UpgradeSpeed = "Upgrade Speed (s)",
-        AutoHatch = "Auto Hatch (Stop on Target)",
-        AutoPlace = "Auto Place Selected (Empty Only)",
-        AutoPickup = "Auto Pickup (Stand 1-50)",
-        CustomName = "Custom Target Name",
-        CustomTooltip = "Enter name to catch",
-        AutoSpawn = "Auto Roll Shop",
-        AutoBuy = "Auto Buy Selected Eggs",
-        LangSetting = "Language Settings",
-        SwitchBtn = "Switch Language (CN/EN)",
-        Author = "Author: TrackMaker"
-    }
-}
-
-local CurrentLang = "cn"
 local UI = {}
 
 local Window = Library:CreateWindow({
 	Title = "jentz hub", 
-	Footer = Lang[CurrentLang].Footer,
+	Footer = "作者: TrackMaker",
 	Icon = 95816097006870,
 	NotifySide = "Right",
 	ShowCustomCursor = true,
@@ -79,50 +25,50 @@ local Tabs = {
 	["UI Settings"] = Window:AddTab("UI Settings", "settings"),
 }
 
-UI.MainGroup = Tabs.Main:AddLeftGroupbox(Lang[CurrentLang].RareGroup)
-UI.InteractGroup = Tabs.Main:AddRightGroupbox(Lang[CurrentLang].AutoGroup)
+UI.MainGroup = Tabs.Main:AddLeftGroupbox("稀有角色筛选")
+UI.InteractGroup = Tabs.Main:AddRightGroupbox("自动功能")
 
 local RareTargets = {"67", "La Vacca Saturnita", "Job Job Sahur", "Matteo", "Pot Hotspot", "Cavallo Virtuoso", "Esok Sekolah", "La Grande Combination", "Girafa Celestre", "Chillin Chilli", "Swag Soda", "Strawberelli Flamingelli", "Cocosini Mama", "Quivioli Ameleonni", "Orangutini Ananasini", "Chef Crabracadabra"}
 local TypeTargets = {"All", "Gold", "Diamond", "Regular", "Snowy", "Tornado", "Magmatic", "Lightning", "Galaxy", "Stinky", "Disco", "Radioactive", "Sakura"}
 
-UI.SelectedTargets = UI.MainGroup:AddDropdown("SelectedTargets", { Values = RareTargets, Default = 1, Multi = true, Text = Lang[CurrentLang].SelectTarget })
-UI.AutoPlace = UI.MainGroup:AddToggle("AutoPlace", { Text = Lang[CurrentLang].AutoPlace, Default = false }) 
-UI.CustomTargetName = UI.MainGroup:AddInput('CustomTargetName', { Default = '', Numeric = false, Finished = false, Text = Lang[CurrentLang].CustomName, Tooltip = Lang[CurrentLang].CustomTooltip, Placeholder = '...' })
+UI.SelectedTargets = UI.MainGroup:AddDropdown("SelectedTargets", { Values = RareTargets, Default = 1, Multi = true, Text = "选择捕获目标" })
+UI.AutoPlace = UI.MainGroup:AddToggle("AutoPlace", { Text = "自动放置选择目标 (仅空位)", Default = false }) 
+UI.CustomTargetName = UI.MainGroup:AddInput('CustomTargetName', { Default = '', Numeric = false, Finished = false, Text = "名字选择目标", Tooltip = "输入想要捕获的目标名称", Placeholder = '...' })
 
-UI.SelectedTypes = UI.MainGroup:AddDropdown("SelectedTypes", { Values = TypeTargets, Default = 1, Multi = true, Text = Lang[CurrentLang].SelectType })
+UI.SelectedTypes = UI.MainGroup:AddDropdown("SelectedTypes", { Values = TypeTargets, Default = 1, Multi = true, Text = "选择蛋种类 (配合强制购买)" })
 
-UI.BtnAllTarget = UI.MainGroup:AddButton(Lang[CurrentLang].SelectAllTarget, function()
+UI.BtnAllTarget = UI.MainGroup:AddButton("全选目标", function()
     local all = {}
     for _, v in pairs(RareTargets) do all[v] = true end
     Library.Options.SelectedTargets:SetValue(all)
 end)
 
-UI.BtnAllType = UI.MainGroup:AddButton(Lang[CurrentLang].SelectAllType, function()
+UI.BtnAllType = UI.MainGroup:AddButton("全选种类", function()
     local all = {}
     for _, v in pairs(TypeTargets) do all[v] = true end
     Library.Options.SelectedTypes:SetValue(all)
 end)
 
-UI.AutoSpawn = UI.MainGroup:AddToggle("AutoSpawn", { Text = Lang[CurrentLang].AutoSpawn, Default = false })
-UI.AutoBuy = UI.MainGroup:AddToggle("AutoBuy", { Text = Lang[CurrentLang].AutoBuy, Default = false })
+UI.AutoSpawn = UI.MainGroup:AddToggle("AutoSpawn", { Text = "自动刷新蛋", Default = false })
+UI.AutoBuy = UI.MainGroup:AddToggle("AutoBuy", { Text = "自动购买选中蛋", Default = false })
 
 UI.MainGroup:AddDivider()
-UI.EnableTypeCheck = UI.MainGroup:AddToggle("EnableTypeCheck", { Text = Lang[CurrentLang].EnableTypeCheck, Default = false }) 
+UI.EnableTypeCheck = UI.MainGroup:AddToggle("EnableTypeCheck", { Text = "开启种类强制限制 (限制品质购买)", Default = false }) 
 
 local Rarities = {"Mythic", "Secret", "Exotic", "Event", "Exclusive", "Admin", "OG", "Divine", "GOD"}
 UI.RarityToggles = {}
 for _, r in ipairs(Rarities) do
-    UI.RarityToggles[r] = UI.MainGroup:AddToggle(r.."Only", { Text = r .. " " .. Lang[CurrentLang].ForceBuy, Default = true })
+    UI.RarityToggles[r] = UI.MainGroup:AddToggle(r.."Only", { Text = r .. " 品质强制买", Default = true })
 end
 
-UI.AutoInteract = UI.InteractGroup:AddToggle("AutoInteract", { Text = Lang[CurrentLang].AutoInteract, Default = false })
-UI.AutoSell = UI.InteractGroup:AddToggle("AutoSell", { Text = Lang[CurrentLang].AutoSell, Default = false })
-UI.AutoUpgrade50 = UI.InteractGroup:AddToggle("AutoUpgrade50", { Text = Lang[CurrentLang].AutoUpgrade, Default = false })
-UI.AutoHatch = UI.InteractGroup:AddToggle("AutoHatch", { Text = Lang[CurrentLang].AutoHatch, Default = false })
-UI.AutoPickup = UI.InteractGroup:AddToggle("AutoPickup", { Text = Lang[CurrentLang].AutoPickup, Default = false })
+UI.AutoInteract = UI.InteractGroup:AddToggle("AutoInteract", { Text = "开启手机端自动点击", Default = false })
+UI.AutoSell = UI.InteractGroup:AddToggle("AutoSell", { Text = "自动卖钱 (TP逻辑)", Default = false })
+UI.AutoUpgrade50 = UI.InteractGroup:AddToggle("AutoUpgrade50", { Text = "自动升级至50级 (1-50)", Default = false })
+UI.AutoHatch = UI.InteractGroup:AddToggle("AutoHatch", { Text = "自动抽蛋 (Stand出目标停止)", Default = false })
+UI.AutoPickup = UI.InteractGroup:AddToggle("AutoPickup", { Text = "自动拾取 (Stand 1-50)", Default = false })
 
 UI.UpgradeSpeed = UI.InteractGroup:AddSlider('UpgradeSpeed', {
-    Text = Lang[CurrentLang].UpgradeSpeed,
+    Text = "升级检测间隔 (秒)",
     Default = 0.1,
     Min = 0.01,
     Max = 1.0,
@@ -130,46 +76,8 @@ UI.UpgradeSpeed = UI.InteractGroup:AddSlider('UpgradeSpeed', {
     Compact = false,
 })
 
-UI.SettingsGroup = Tabs.Main:AddRightGroupbox(Lang[CurrentLang].LangSetting)
-
-UI.SwitchBtn = UI.SettingsGroup:AddButton(Lang[CurrentLang].SwitchBtn, function()
-    CurrentLang = (CurrentLang == "cn") and "en" or "cn"
-    local L = Lang[CurrentLang]
-    
-    pcall(function() Window:SetFooter(L.Footer) end)
-    pcall(function() UI.MainGroup:SetText(L.RareGroup) end)
-    pcall(function() UI.InteractGroup:SetText(L.AutoGroup) end)
-    pcall(function() UI.SettingsGroup:SetText(L.LangSetting) end)
-    
-    pcall(function() UI.SelectedTargets:SetText(L.SelectTarget) end)
-    pcall(function() UI.AutoPlace:SetText(L.AutoPlace) end)
-    pcall(function() UI.CustomTargetName:SetText(L.CustomName) end)
-    pcall(function() UI.SelectedTypes:SetText(L.SelectType) end)
-    pcall(function() UI.BtnAllTarget:SetText(L.SelectAllTarget) end)
-    pcall(function() UI.BtnAllType:SetText(L.SelectAllType) end)
-    
-    pcall(function() UI.AutoSpawn:SetText(L.AutoSpawn) end)
-    pcall(function() UI.AutoBuy:SetText(L.AutoBuy) end)
-    pcall(function() UI.EnableTypeCheck:SetText(L.EnableTypeCheck) end)
-    
-    for r, toggle in pairs(UI.RarityToggles) do
-        local txt = (CurrentLang == "cn") and (r .. " " .. L.ForceBuy) or (L.ForceBuy .. " " .. r)
-        pcall(function() toggle:SetText(txt) end)
-    end
-    
-    pcall(function() UI.AutoInteract:SetText(L.AutoInteract) end)
-    pcall(function() UI.AutoSell:SetText(L.AutoSell) end)
-    pcall(function() UI.AutoUpgrade50:SetText(L.AutoUpgrade) end)
-    pcall(function() UI.AutoHatch:SetText(L.AutoHatch) end)
-    pcall(function() UI.AutoPickup:SetText(L.AutoPickup) end)
-    pcall(function() UI.UpgradeSpeed:SetText(L.UpgradeSpeed) end)
-    pcall(function() UI.SwitchBtn:SetText(L.SwitchBtn) end)
-    pcall(function() UI.AuthorLabel:SetText(L.Author) end)
-    
-    Library:Notify("Language switched / 语言已切换")
-end)
-
-UI.AuthorLabel = UI.SettingsGroup:AddLabel(Lang["cn"].Author)
+UI.SettingsGroup = Tabs.Main:AddRightGroupbox("信息 / Info")
+UI.AuthorLabel = UI.SettingsGroup:AddLabel("作者: TrackMaker")
 
 local CONFIG = {
     clickInterval = 0.1,
@@ -295,21 +203,50 @@ task.spawn(function()
             local selectedNames = Library.Options.SelectedTargets.Value
             local selectedTypes = Library.Options.SelectedTypes.Value
             local customTargetName = Library.Options.CustomTargetName.Value 
+            local enableTypeCheck = Library.Toggles.EnableTypeCheck.Value
 
             local shopHasTarget = false
 
             for _, egg in pairs(eggsFolder:GetChildren()) do
                 local eggName = egg.Name
-                local isTarget = false
-                local isRarityStop = false
                 
+                -- 1. 检查是否为指定名字目标 (IsNameTarget)
+                local isNameTarget = false
                 for name, isSelected in pairs(selectedNames) do
-                    if isSelected and string.find(eggName, name) then isTarget = true; break end
+                    if isSelected and string.find(eggName, name) then isNameTarget = true; break end
                 end
-                if not isTarget and customTargetName ~= "" then
-                     if string.find(eggName, customTargetName) then isTarget = true end
+                if not isNameTarget and customTargetName ~= "" then
+                     if string.find(eggName, customTargetName) then isNameTarget = true end
                 end
 
+                -- 2. 检查是否匹配选中的类型 (IsTypeMatch)
+                local isTypeMatch = false
+                local anyTypeSelected = false
+                for _, isSelected in pairs(selectedTypes) do
+                    if isSelected then anyTypeSelected = true; break end
+                end
+                
+                if not anyTypeSelected then
+                    -- 默认除了特殊的都算Regular
+                    if not (string.find(eggName, "Gold") or string.find(eggName, "Diamond") or string.find(eggName, "Shiny")) then isTypeMatch = true end
+                else
+                    if selectedTypes["All"] then
+                        isTypeMatch = true
+                    else
+                        for typeKey, isSelected in pairs(selectedTypes) do
+                            if isSelected then
+                                if typeKey == "Regular" then
+                                    if not (string.find(eggName, "Gold") or string.find(eggName, "Diamond") or string.find(eggName, "Shiny")) then isTypeMatch = true; break end
+                                elseif string.find(eggName, typeKey) then 
+                                    isTypeMatch = true; break 
+                                end
+                            end
+                        end
+                    end
+                end
+
+                -- 3. 检查是否匹配品质 (IsRarityMatch)
+                local isRarityMatch = false
                 if (Library.Toggles.MythicOnly.Value and CheckRarity(egg, "Mythic")) or 
                    (Library.Toggles.SecretOnly.Value and CheckRarity(egg, "Secret")) or 
                    (Library.Toggles.ExoticOnly.Value and CheckRarity(egg, "Exotic")) or
@@ -319,56 +256,40 @@ task.spawn(function()
                    (Library.Toggles.OGOnly.Value and CheckRarity(egg, "OG")) or
                    (Library.Toggles.DivineOnly.Value and CheckRarity(egg, "Divine")) or
                    (Library.Toggles.GODOnly.Value and CheckRarity(egg, "GOD")) then
-                    isRarityStop = true
+                    isRarityMatch = true
                 end
 
-                if isTarget or isRarityStop then
+                -- 4. 综合判断 (Final Decision)
+                local finalShouldBuy = false
+
+                -- 逻辑: 名字匹配优先，或者品质匹配
+                -- 如果开启了“种类强制限制”，则品质匹配必须同时满足种类匹配
+                
+                if isNameTarget then
+                    -- 名字目标通常直接购买
+                    finalShouldBuy = true 
+                elseif isRarityMatch then
+                    -- 品质目标受种类限制
+                    if enableTypeCheck then
+                        if isTypeMatch then
+                            finalShouldBuy = true
+                        end
+                    else
+                        finalShouldBuy = true
+                    end
+                end
+                
+                if finalShouldBuy then
                     shopHasTarget = true
                 end
-
-                if Library.Toggles.AutoBuy.Value then
-                    local shouldBuy = false
-                    local isTypeMatch = false
-                    local anyTypeSelected = false
-                    for _, isSelected in pairs(selectedTypes) do
-                        if isSelected then anyTypeSelected = true; break end
-                    end
-                    
-                    if not anyTypeSelected then
-                        if not (string.find(eggName, "Gold") or string.find(eggName, "Diamond") or string.find(eggName, "Shiny")) then isTypeMatch = true end
-                    else
-                        if selectedTypes["All"] then
-                            isTypeMatch = true
-                        else
-                            for typeKey, isSelected in pairs(selectedTypes) do
-                                if isSelected then
-                                    if typeKey == "Regular" then
-                                        if not (string.find(eggName, "Gold") or string.find(eggName, "Diamond") or string.find(eggName, "Shiny")) then isTypeMatch = true; break end
-                                    elseif string.find(eggName, typeKey) then isTypeMatch = true; break end
-                                end
-                            end
-                        end
-                    end
-
-                    if isRarityStop then
-                        if Library.Toggles.EnableTypeCheck.Value then
-                            if isTypeMatch then shouldBuy = true end
-                        else
-                            shouldBuy = true
-                        end
-                    end
-
-                    if not shouldBuy and isTarget and isTypeMatch then
-                        shouldBuy = true
-                    end
-                    
-                    if shouldBuy and lastBought ~= egg then
-                        ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/BuyEgg"):InvokeServer(eggName, 1)
-                        lastBought = egg
-                    end
+                
+                if Library.Toggles.AutoBuy.Value and finalShouldBuy and lastBought ~= egg then
+                    ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/BuyEgg"):InvokeServer(eggName, 1)
+                    lastBought = egg
                 end
             end
 
+            -- 只有当商店里没有任何目标时，才去刷新
             if Library.Toggles.AutoSpawn.Value and not shopHasTarget then
                 pcall(function()
                      ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/RequestEggSpawn"):InvokeServer()
@@ -684,3 +605,4 @@ SaveManager:BuildConfigSection(Tabs["UI Settings"])
 ThemeManager:SetLibrary(Library)
 ThemeManager:ApplyToTab(Tabs["UI Settings"])
 Library:Notify("All Systems Operational")
+
