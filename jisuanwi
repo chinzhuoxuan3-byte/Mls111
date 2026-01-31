@@ -1,0 +1,240 @@
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local Parent = (runcode and game:GetService("CoreGui")) or game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+
+local ScreenGui = Instance.new("ScreenGui")
+local Main = Instance.new("Frame")
+local MainStroke = Instance.new("UIStroke")
+local Header = Instance.new("Frame")
+local Title = Instance.new("TextLabel")
+local Content = Instance.new("Frame")
+local BaseInput = Instance.new("TextBox")
+local BaseStroke = Instance.new("UIStroke")
+local CalcBtn = Instance.new("TextButton")
+local Result = Instance.new("TextLabel")
+local Close = Instance.new("TextButton")
+local ToggleBtn = Instance.new("TextButton")
+local Grid = Instance.new("UIGridLayout")
+local SlotContainer = Instance.new("Frame")
+
+local AttrData = {
+    ["无"] = 1.0, ["Sakura"] = 1.6, ["雷电"] = 1.9, ["流星"] = 2.1,
+    ["Disco"] = 3.0, ["银河"] = 2.2, ["核废料"] = 2.1, ["龙卷风"] = 1.7,
+    ["冰雪"] = 1.5, ["黑洞"] = 2.0, ["火山"] = 2.4, ["毒气"] = 1.8, ["塔克"] = 2.0
+}
+local AttrNames = {"无", "Sakura", "雷电", "流星", "Disco", "银河", "核废料", "龙卷风", "冰雪", "黑洞", "火山", "毒气", "塔克"}
+local Selected = {1, 1, 1, 1}
+local IsExpanded = true
+
+ScreenGui.Name = "MiniCalc"
+ScreenGui.Parent = Parent
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+Main.Name = "Main"
+Main.Parent = ScreenGui
+Main.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+Main.Position = UDim2.new(0.5, -80, 0.5, -110)
+Main.Size = UDim2.new(0, 160, 0, 220)
+Main.ClipsDescendants = true
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 8)
+
+MainStroke.Parent = Main
+MainStroke.Thickness = 1.5
+MainStroke.Color = Color3.fromRGB(60, 60, 60)
+
+Header.Name = "Header"
+Header.Parent = Main
+Header.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+Header.Size = UDim2.new(1, 0, 0, 30)
+Header.BorderSizePixel = 0
+Header.Active = true 
+
+local HeaderCorner = Instance.new("UICorner", Header)
+HeaderCorner.CornerRadius = UDim.new(0, 8)
+
+local HeaderCover = Instance.new("Frame", Header)
+HeaderCover.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+HeaderCover.BorderSizePixel = 0
+HeaderCover.Size = UDim2.new(1, 0, 0.5, 0)
+HeaderCover.Position = UDim2.new(0, 0, 0.5, 0)
+
+Title.Parent = Header
+Title.Size = UDim2.new(0.6, 0, 1, 0)
+Title.Position = UDim2.new(0, 8, 0, 0)
+Title.Text = "计算器 TrackMaker"
+Title.TextColor3 = Color3.fromRGB(220, 220, 220)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 11
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.BackgroundTransparency = 1
+
+ToggleBtn.Parent = Header
+ToggleBtn.Position = UDim2.new(0.7, 0, 0, 0)
+ToggleBtn.Size = UDim2.new(0, 20, 1, 0)
+ToggleBtn.Text = "-"
+ToggleBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+ToggleBtn.BackgroundTransparency = 1
+ToggleBtn.TextSize = 14
+ToggleBtn.Font = Enum.Font.Gotham
+
+Close.Parent = Header
+Close.Position = UDim2.new(0.85, 0, 0, 0)
+Close.Size = UDim2.new(0, 20, 1, 0)
+Close.Text = "×"
+Close.TextColor3 = Color3.fromRGB(255, 80, 80)
+Close.BackgroundTransparency = 1
+Close.TextSize = 16
+Close.Font = Enum.Font.Gotham
+
+Content.Name = "Content"
+Content.Parent = Main
+Content.BackgroundTransparency = 1
+Content.Position = UDim2.new(0, 0, 0, 30)
+Content.Size = UDim2.new(1, 0, 1, -30)
+
+BaseInput.Parent = Content
+BaseInput.Size = UDim2.new(0.9, 0, 0.12, 0)
+BaseInput.Position = UDim2.new(0.05, 0, 0.05, 0)
+BaseInput.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+BaseInput.PlaceholderText = "输入底价..."
+BaseInput.Text = ""
+BaseInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+BaseInput.Font = Enum.Font.Gotham
+BaseInput.TextSize = 10
+Instance.new("UICorner", BaseInput).CornerRadius = UDim.new(0, 6)
+BaseStroke.Parent = BaseInput
+BaseStroke.Thickness = 1
+BaseStroke.Color = Color3.fromRGB(80, 80, 80)
+BaseStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+SlotContainer.Parent = Content
+SlotContainer.Position = UDim2.new(0.05, 0, 0.22, 0)
+SlotContainer.Size = UDim2.new(0.9, 0, 0.3, 0)
+SlotContainer.BackgroundTransparency = 1
+
+Grid.Parent = SlotContainer
+Grid.CellPadding = UDim2.new(0.05, 0, 0.1, 0)
+Grid.CellSize = UDim2.new(0.47, 0, 0.45, 0)
+
+local function CreateSlot(i)
+    local btn = Instance.new("TextButton", SlotContainer)
+    btn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    btn.Text = "槽位 " .. i
+    btn.TextColor3 = Color3.fromRGB(150, 150, 150)
+    btn.Font = Enum.Font.GothamMedium
+    btn.TextSize = 9
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+    
+    local stroke = Instance.new("UIStroke", btn)
+    stroke.Color = Color3.fromRGB(60, 60, 60)
+    stroke.Thickness = 1
+    
+    btn.MouseButton1Click:Connect(function()
+        Selected[i] = (Selected[i] % #AttrNames) + 1
+        local name = AttrNames[Selected[i]]
+        btn.Text = name
+        
+        if Selected[i] ~= 1 then
+            btn.BackgroundColor3 = Color3.fromRGB(50, 45, 25)
+            btn.TextColor3 = Color3.fromRGB(255, 220, 100)
+            stroke.Color = Color3.fromRGB(200, 160, 50)
+        else
+            btn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+            btn.TextColor3 = Color3.fromRGB(150, 150, 150)
+            stroke.Color = Color3.fromRGB(60, 60, 60)
+        end
+    end)
+end
+
+for i = 1, 4 do CreateSlot(i) end
+
+CalcBtn.Parent = Content
+CalcBtn.Size = UDim2.new(0.9, 0, 0.12, 0)
+CalcBtn.Position = UDim2.new(0.05, 0, 0.58, 0)
+CalcBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+CalcBtn.Text = "计算"
+CalcBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CalcBtn.Font = Enum.Font.GothamBold
+CalcBtn.TextSize = 11
+Instance.new("UICorner", CalcBtn).CornerRadius = UDim.new(0, 6)
+local CalcStroke = Instance.new("UIStroke", CalcBtn)
+CalcStroke.Color = Color3.fromRGB(100, 180, 255)
+CalcStroke.Thickness = 1
+
+Result.Parent = Content
+Result.Position = UDim2.new(0.05, 0, 0.74, 0)
+Result.Size = UDim2.new(0.9, 0, 0.2, 0)
+Result.Text = "等待计算..."
+Result.TextColor3 = Color3.fromRGB(100, 255, 180)
+Result.Font = Enum.Font.GothamBold
+Result.TextSize = 10
+Result.TextWrapped = true
+Result.BackgroundTransparency = 1
+
+local function ParseValue(s)
+    s = s:lower():gsub("%s+", ""):gsub(",", "")
+    local n, suf = s:match("([%d%.]+)(%a*)")
+    if not n then return 0 end
+    local mults = {k=1e3, m=1e6, b=1e9, t=1e12}
+    return (tonumber(n) or 0) * (mults[suf] or 1)
+end
+
+local function FormatValue(v)
+    if v >= 1e9 then return string.format("%.3fB", v/1e9)
+    elseif v >= 1e6 then return string.format("%.3fM", v/1e6)
+    elseif v >= 1e3 then return string.format("%.1fK", v/1e3)
+    else return tostring(math.floor(v)) end
+end
+
+CalcBtn.MouseButton1Click:Connect(function()
+    local base = ParseValue(BaseInput.Text)
+    local totalBonus = 0
+    for _, idx in ipairs(Selected) do
+        totalBonus = totalBonus + (AttrData[AttrNames[idx]] - 1)
+    end
+    local finalPrice = base * (1 + totalBonus)
+    Result.Text = "结果: " .. FormatValue(finalPrice) .. "\n(x" .. (1+totalBonus) .. ")"
+end)
+
+ToggleBtn.MouseButton1Click:Connect(function()
+    IsExpanded = not IsExpanded
+    ToggleBtn.Text = IsExpanded and "-" or "+"
+    if IsExpanded then
+        Main:TweenSize(UDim2.new(0, 160, 0, 220), "Out", "Back", 0.4, true)
+    else
+        Main:TweenSize(UDim2.new(0, 160, 0, 30), "Out", "Quad", 0.3, true)
+    end
+end)
+
+Close.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
+
+local dragging, dragInput, dragStart, startPos
+local function update(input)
+    local delta = input.Position - dragStart
+    Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+
+Header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = Main.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+Header.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        update(input)
+    end
+end)
