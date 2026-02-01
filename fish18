@@ -2,7 +2,7 @@ local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/rel
 
 local Window = WindUI:CreateWindow({
     Title = "jentz hub",
-    Icon = "rbxassetid://13350795660",
+    Icon = "rbxassetid://90861284322548",
     Author = "TrackMaker",
     Folder = "jentzhub",
     Size = UDim2.fromOffset(580, 460),
@@ -10,7 +10,7 @@ local Window = WindUI:CreateWindow({
     Theme = "Dark",
     SideBarWidth = 200,
     HasOutline = false,
-    Background = "rbxassetid://127681877075540"
+    Background = "rbxassetid://73191961194532"
 })
 
 local Players = game:GetService("Players")
@@ -118,6 +118,14 @@ AutoSection:Toggle({
     end
 })
 
+local AutoHatch = false
+AutoSection:Toggle({
+    Title = "自动孵化蛋 (Stand 1-50)",
+    Callback = function(state)
+        AutoHatch = state
+    end
+})
+
 local AutoPlace = false
 AutoSection:Toggle({
     Title = "自动放置选择目标 (仅空位)",
@@ -161,10 +169,12 @@ AutoSection:Toggle({
 local UpgradeSpeed = 0.1
 AutoSection:Slider({
     Title = "升级检测间隔 (秒)",
-    Min = 0.01,
-    Max = 1.0,
-    Default = 0.1,
-    Step = 0.01,
+    Step = 0.1, 
+    Value = {
+        Min = 0.1,
+        Max = 2.0,
+        Default = 0.1
+    },
     Callback = function(val)
         UpgradeSpeed = val
     end
@@ -581,6 +591,84 @@ task.spawn(function()
 end)
 
 task.spawn(function()
+    local HatchRemote = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RE/HatchEgg")
+    local PlotsFolder = Workspace:WaitForChild("CoreObjects"):WaitForChild("Plots")
+
+    local function GetEggNameFromStand(stand)
+        for _, child in pairs(stand:GetChildren()) do
+            if child:IsA("Model") then
+                if child.Name ~= "UpgradeButton" and child.Name ~= "UpgradeGUI" and child.Name ~= "Base" and child.Name ~= "Part" then
+                    return child.Name
+                end
+            end
+        end
+        return nil
+    end
+
+    local function GetMyPlot()
+        for _, plot in pairs(PlotsFolder:GetChildren()) do
+            local owner = plot:FindFirstChild("Owner")
+            if owner and owner.Value == player then return plot end
+        end
+        local char = player.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            local root = char.HumanoidRootPart
+            local closest = nil
+            local minDidst = 9999
+            for _, plot in pairs(PlotsFolder:GetChildren()) do
+                local ref = plot:FindFirstChild("Floor") or plot:FindFirstChild("Base") or plot:FindFirstChildWhichIsA("BasePart", true)
+                if ref then
+                    local dist = (root.Position - ref.Position).Magnitude
+                    if dist < minDidst then minDidst = dist; closest = plot end
+                end
+            end
+            if closest and minDidst < 300 then return closest end
+        end
+        return nil
+    end
+
+    while true do
+        if AutoHatch then
+            local MyPlot = GetMyPlot()
+            if MyPlot then
+                local Stands = MyPlot:FindFirstChild("Stands")
+                if Stands then
+                    for i = 1, 50 do
+                        local standName = "Stand" .. i
+                        local stand = Stands:FindFirstChild(standName)
+                        
+                        if stand then
+                            local currentModelName = GetEggNameFromStand(stand)
+                            if currentModelName then
+                                local isTarget = false
+                                for _, name in pairs(SelectedTargets) do
+                                    if string.find(currentModelName, name) then
+                                        isTarget = true
+                                        break
+                                    end
+                                end
+                                if not isTarget and CustomTargetName ~= "" then
+                                    if string.find(currentModelName, CustomTargetName) then
+                                        isTarget = true
+                                    end
+                                end
+
+                                if not isTarget then
+                                    pcall(function()
+                                        HatchRemote:FireServer(standName, currentModelName)
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        task.wait(0.5)
+    end
+end)
+
+task.spawn(function()
     local PlaceRemote = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/PlaceEgg")
     local PlotsFolder = Workspace:WaitForChild("CoreObjects"):WaitForChild("Plots")
 
@@ -716,3 +804,4 @@ Window:Notify({
     Content = "jentz hub 已加载",
     Duration = 5
 })
+
