@@ -30,7 +30,12 @@ local TargetSection = Tab:Section({
     TextXAlignment = "Left"
 })
 
-local RareTargets = {"67", "La Vacca Saturnita", "Job Job Sahur", "Matteo", "Pot Hotspot", "Cavallo Virtuoso", "Esok Sekolah", "La Grande Combination", "Girafa Celestre", "Chillin Chilli", "Swag Soda", "Strawberelli Flamingelli", "Cocosini Mama", "Quivioli Ameleonni", "Orangutini Ananasini", "Chef Crabracadabra"}
+local RareTargets = {
+    "67", "La Vacca Saturnita", "Job Job Sahur", "Matteo", "Pot Hotspot", "Cavallo Virtuoso", "Esok Sekolah", 
+    "La Grande Combination", "Girafa Celestre", "Chillin Chilli", "Swag Soda", "Strawberelli Flamingelli", 
+    "Cocosini Mama", "Quivioli Ameleonni", "Orangutini Ananasini", "Chef Crabracadabra",
+    "Crabbo Limonetta", "Bandito Axolito", "Stoppo Luminino", "Money Money Man", "Karloo", "Pirulitoita Bicicleteira"
+}
 local TypeTargets = {"All", "Gold", "Diamond", "Regular", "Snowy", "Tornado", "Magmatic", "Lightning", "Galaxy", "Stinky", "Disco", "Radioactive", "Sakura"}
 
 local SelectedTargets = {}
@@ -78,7 +83,7 @@ local RaritySection = Tab:Section({
     TextXAlignment = "Left"
 })
 
-local Rarities = {"Mythic", "Secret", "Exotic", "Event", "Exclusive", "Admin", "OG", "Divine", "GOD"}
+local Rarities = {"Common", "Uncommon", "Rare", "Epic", "Mythic", "Secret", "Exotic", "Event", "Exclusive", "Admin", "OG", "Divine", "GOD"}
 local RarityToggles = {}
 
 for _, r in ipairs(Rarities) do
@@ -316,16 +321,11 @@ task.spawn(function()
                     
                     if not hasTarget then
                         local isRarityMatch = false
-                        if (RarityToggles["Mythic"] and CheckRarity(egg, "Mythic")) or 
-                           (RarityToggles["Secret"] and CheckRarity(egg, "Secret")) or 
-                           (RarityToggles["Exotic"] and CheckRarity(egg, "Exotic")) or
-                           (RarityToggles["Event"] and CheckRarity(egg, "Event")) or
-                           (RarityToggles["Exclusive"] and CheckRarity(egg, "Exclusive")) or
-                           (RarityToggles["Admin"] and CheckRarity(egg, "Admin")) or
-                           (RarityToggles["OG"] and CheckRarity(egg, "OG")) or
-                           (RarityToggles["Divine"] and CheckRarity(egg, "Divine")) or
-                           (RarityToggles["GOD"] and CheckRarity(egg, "GOD")) then
-                            isRarityMatch = true
+                        for rarityName, isEnabled in pairs(RarityToggles) do
+                            if isEnabled and CheckRarity(egg, rarityName) then
+                                isRarityMatch = true
+                                break
+                            end
                         end
 
                         if isRarityMatch then
@@ -440,16 +440,11 @@ task.spawn(function()
                     end
 
                     local isRarityMatch = false
-                    if (RarityToggles["Mythic"] and CheckRarity(egg, "Mythic")) or 
-                       (RarityToggles["Secret"] and CheckRarity(egg, "Secret")) or 
-                       (RarityToggles["Exotic"] and CheckRarity(egg, "Exotic")) or
-                       (RarityToggles["Event"] and CheckRarity(egg, "Event")) or
-                       (RarityToggles["Exclusive"] and CheckRarity(egg, "Exclusive")) or
-                       (RarityToggles["Admin"] and CheckRarity(egg, "Admin")) or
-                       (RarityToggles["OG"] and CheckRarity(egg, "OG")) or
-                       (RarityToggles["Divine"] and CheckRarity(egg, "Divine")) or
-                       (RarityToggles["GOD"] and CheckRarity(egg, "GOD")) then
-                        isRarityMatch = true
+                    for rarityName, isEnabled in pairs(RarityToggles) do
+                        if isEnabled and CheckRarity(egg, rarityName) then
+                            isRarityMatch = true
+                            break
+                        end
                     end
 
                     local finalShouldBuy = false
@@ -804,4 +799,3 @@ Window:Notify({
     Content = "jentz hub 已加载",
     Duration = 5
 })
-
