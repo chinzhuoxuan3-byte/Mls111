@@ -27,6 +27,7 @@ local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 
 -- 数据列表
 local RareTargets = {
@@ -70,8 +71,7 @@ Groups.Target:AddToggle('EnableTypeCheck', {
     Tooltip = '开启后，只有上方选中的种类（如Gold）才会被购买',
 })
 
--- 品质设置 (使用 MultiDropdown 更符合 Vape 风格且省空间，或者 Toggle 列表)
--- 为了方便操作，这里使用 Toggle 列表，但做得紧凑
+-- 品质设置
 for _, r in ipairs(Rarities) do
     Groups.Rarity:AddToggle('Rarity_' .. r, {
         Text = r .. ' 强制买/停',
@@ -115,11 +115,6 @@ Groups.Auto:AddToggle('AutoSell', {
 
 Groups.Auto:AddToggle('AutoUpgrade50', {
     Text = '自动升级 (1-50)',
-    Default = false,
-})
-
-Groups.Auto:AddToggle('AutoPickup', {
-    Text = '自动拾取',
     Default = false,
 })
 
@@ -296,7 +291,7 @@ task.spawn(function()
                 for _, egg in pairs(eggsFolder:GetChildren()) do
                     local eggName = egg.Name
                     
-                    -- 名称匹配 (Linoria的多选是 [Value] = true)
+                    -- 名称匹配
                     for name, state in pairs(Options.SelectedTargets.Value) do
                         if state and string.find(eggName, name) then hasTarget = true; break end
                     end
@@ -309,7 +304,6 @@ task.spawn(function()
                         -- 品质匹配
                         local isRarityMatch = false
                         for _, rarityName in ipairs(Rarities) do
-                            -- Toggle 命名格式为 Rarity_Mythic
                             if Toggles['Rarity_' .. rarityName].Value and CheckRarity(egg, rarityName) then
                                 isRarityMatch = true
                                 break
@@ -470,7 +464,6 @@ end)
 -- 自动升级
 task.spawn(function()
     local UpgradeRemote = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RF/UpgradeBrainrot")
-    local CompletedStands = {}
     local IsUpgrading = {}
 
     while true do
@@ -481,7 +474,7 @@ task.spawn(function()
                 if Stands then
                     for i = 1, 50 do
                         local name = "Stand" .. i
-                        if not CompletedStands[name] and not IsUpgrading[name] then
+                        if not IsUpgrading[name] then
                             local stand = Stands:FindFirstChild(name)
                             if stand then
                                 task.spawn(function()
@@ -492,27 +485,13 @@ task.spawn(function()
                                     
                                     if lvlLabel then
                                         local txt = lvlLabel.Text
-                                        if string.find(string.lower(txt), "max") then
-                                            CompletedStands[name] = true
-                                        else
+                                        if not string.find(string.lower(txt), "max") then
                                             local lvlNum = tonumber(string.match(txt, "%d+"))
-                                            if lvlNum then
-                                                if lvlNum >= 50 then
-                                                    CompletedStands[name] = true
-                                                else
-                                                    IsUpgrading[name] = true
-                                                    pcall(function() UpgradeRemote:InvokeServer(name) end)
-                                                    local sTime = tick()
-                                                    while tick() - sTime < 1.0 do
-                                                        local checkLbl = stand:FindFirstChild("UpgradeButton") and stand.UpgradeButton:FindFirstChild("UpgradeGUI") and stand.UpgradeButton.UpgradeGUI:FindFirstChild("Upgrade") and stand.UpgradeButton.UpgradeGUI.Upgrade:FindFirstChild("Level")
-                                                        if checkLbl then
-                                                            local checkNum = tonumber(string.match(checkLbl.Text, "%d+"))
-                                                            if checkNum and checkNum > lvlNum then break end
-                                                        end
-                                                        task.wait(0.1)
-                                                    end
-                                                    IsUpgrading[name] = false
-                                                end
+                                            if lvlNum and lvlNum < 50 then
+                                                IsUpgrading[name] = true
+                                                pcall(function() UpgradeRemote:InvokeServer(name) end)
+                                                task.wait(0.1)
+                                                IsUpgrading[name] = false
                                             end
                                         end
                                     end
@@ -523,7 +502,6 @@ task.spawn(function()
                 end
             end
         else
-            table.clear(CompletedStands)
             table.clear(IsUpgrading)
         end
         task.wait(Options.UpgradeSpeed.Value)
@@ -603,39 +581,6 @@ task.spawn(function()
                                         pcall(function() PlaceRemote:InvokeServer(standName, foundTarget) end)
                                     end)
                                 end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        task.wait(0.8)
-    end
-end)
-
--- 自动拾取
-task.spawn(function()
-    local PickupRemote = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Networker"):WaitForChild("RE/PickupBrainrot")
-    
-    while true do
-        if Toggles.AutoPickup.Value then
-            local MyPlot = GetMyPlot()
-            if MyPlot then
-                local Stands = MyPlot:FindFirstChild("Stands")
-                if Stands then
-                    for i = 1, 50 do
-                        local standName = "Stand" .. i
-                        local stand = Stands:FindFirstChild(standName)
-                        if stand then
-                            local hasItem = false
-                             for _, child in pairs(stand:GetChildren()) do
-                                if child:IsA("Model") and child.Name ~= "UpgradeButton" and child.Name ~= "UpgradeGUI" and child.Name ~= "Base" and child.Name ~= "Part" then
-                                    hasItem = true
-                                    break
-                                end
-                            end
-                            if hasItem then
-                                pcall(function() PickupRemote:FireServer(standName) end)
                             end
                         end
                     end
